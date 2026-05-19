@@ -395,6 +395,6 @@ workflow {
     BAM_QC(INDEX_REALIGNED.out)
 
     // Run AMBER (Prep -> Run)
-    AMBER_PREP(INDEX_REALIGNED.out)
-    AMBER(AMBER_PREP.out)
+    // AMBER_PREP(INDEX_REALIGNED.out)
+    // AMBER(AMBER_PREP.out)
 }

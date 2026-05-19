@@ -86,15 +86,8 @@ params.bam_q        = 1 // Mapping quality. Currently set to 1 simply to remove 
 params.trimlength   = 85
 ```
 
-Since the `AMBER` tool requires special software and a unique conda environment on WAHAB, we will just skip this step for now.
-
-At the bottom of the `main.nf` file, hash out the AMBER rules.
-
-```bash
-    // Run AMBER
-    // AMBER_PREP(INDEX_REALIGNED.out)
-    // AMBER(AMBER_PREP.out)
-```
+Since the `AMBER` tool requires special software and a unique conda environment on WAHAB, we will just skip this step for now. 
+See below for instructions on how to run `AMBER` (not tested).
 
 ## To Run
 
@@ -131,3 +124,47 @@ nextflow run main.nf -profile standard -resume
 
 If everything went well, the pipeline will run and submit jobs to the queue. 
 On the first run, a new conda environment will be created. This can take some time.
+
+## Including AMBER in the pipeline
+
+1. Remove `//` in the AMBER step at the bottom of the `main.nf` file. The code should look like this.
+
+```bash
+    // Run AMBER (Prep -> Run)
+    AMBER_PREP(INDEX_REALIGNED.out)
+    AMBER(AMBER_PREP.out)
+
+```
+
+2. Update the `environment.yml` file
+
+```bash
+name: trimming
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - fastp=0.23.4
+  - seqtk=1.4
+  - bwa=0.7.17
+  - samtools=1.19
+  - fastqc=0.11.9
+  - openjdk=11
+  - fontconfig
+  - freetype
+  - python=3.9
+  - numpy
+  - matplotlib
+  - pysam
+
+```
+
+3. Update the `nextflow.config` file and remove the reference to the conda environment.
+
+```bash
+// AMBER uses different conda environment
+            withName: 'AMBER' {
+                cpus = 2
+                memory = '8 GB'
+```
