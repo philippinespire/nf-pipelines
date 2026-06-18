@@ -52,10 +52,11 @@ ln -s /Generode/data/raw_reads_symlinks/modern/*fastq.gz ./data/symlinks
 
 ls ./data/symlinks/*fastq.gz | xargs -n1 basename | cut -d "_" -f1,2,3 | uniq > ./inputfiles/fastq_filenames.txt
 
-# Create softlinks to reference and repma bed file
+# Create softlinks to reference, dict, and repma bed file
 # Adjust the path to the reference if necessary
 
 ln -s /Generode/reference/<reference>.fasta ./data/reference/
+ln -s /Generode/reference/<reference>.dict ./data/reference/
 ln -s /Generode/reference/<reference>.fasta.* ./data/reference/
 ln -s /Generode/reference/<reference>.repma.bed ./data/reference/
 
