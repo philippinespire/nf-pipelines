@@ -1,11 +1,15 @@
 nextflow.enable.dsl=2
 
 // --- Default Parameters ---
+params.samplesheet = "${projectDir}/inputfiles/samplesheet.csv"
 params.samples_file = "${projectDir}/inputfiles/fastq_filenames.txt"
 params.indir        = "${projectDir}/data/symlinks"
 params.outdir       = "${projectDir}/results" 
 params.reference    = "${projectDir}/data/reference/<reference>.fasta"
 params.bed_file     = "${projectDir}/data/reference/<reference>.repma.bed"
+params.reference_prefix = params.reference.tokenize('/').last().replaceAll(/\.(fa|fasta|fna)$/, '')
+params.historical_era = "historical"
+params.run_historical_fastqc = false
 params.split_script = "${projectDir}/scripts/split_reads.sh"
 params.rmdup_script = "${projectDir}/scripts/samremovedup.py"
 params.amber_script = "/home/mdehasqu/TOOLS/AMBER/AMBER" // Ignore this.
@@ -13,24 +17,54 @@ params.bwa_threads  = 4
 params.bam_q        = 1 // Mapping quality. Currently set to 1 simply to remove unmapped reads. 
 params.trimlength   = 85
 
-// --- Input Channel ---
-// Reads the file line by line (e.g., TzoCMta031_1_22CVWFLT3L3)
-// Checks if R1/R2 exist, and emits a tuple [sample_id, [r1, r2]]
-Channel
-    .fromPath(params.samples_file)
-    .splitText()
-    .map { it.trim() }
-    .filter { it.length() > 0 }
-    .map { sample_id ->
-        def r1 = file("${params.indir}/${sample_id}_R1.fastq.gz")
-        def r2 = file("${params.indir}/${sample_id}_R2.fastq.gz")
-        
-        if( !r1.exists() ) error "R1 file not found for ${sample_id}: ${r1}"
-        if( !r2.exists() ) error "R2 file not found for ${sample_id}: ${r2}"
-        
-        return [ sample_id, [r1, r2] ]
+def resolve_reads = { String sample_id ->
+    def r1 = file("${params.indir}/${sample_id}_R1.fastq.gz")
+    def r2 = file("${params.indir}/${sample_id}_R2.fastq.gz")
+
+    if( !r1.exists() ) error "R1 file not found for ${sample_id}: ${r1}"
+    if( !r2.exists() ) error "R2 file not found for ${sample_id}: ${r2}"
+
+    return [r1, r2]
+}
+
+def samplesheet_file = file(params.samplesheet)
+def legacy_samples_file = file(params.samples_file)
+
+// --- Input Channels ---
+// Sample metadata is taken from a CSV when available.
+// Fallback: legacy one-column sample list, which defaults all samples to modern.
+sample_metadata_ch = samplesheet_file.exists() ?
+    Channel
+        .fromPath(samplesheet_file, checkIfExists: true)
+        .splitCsv(header: true)
+        .map { row -> tuple(row.sample.trim(), row.era?.trim()?.toLowerCase() ?: 'modern') }
+        .filter { sample_id, era -> sample_id }
+    :
+    Channel
+        .fromPath(legacy_samples_file, checkIfExists: true)
+        .splitText()
+        .map { it.trim() }
+        .filter { it.length() > 0 }
+        .map { sample_id -> tuple(sample_id, 'modern') }
+
+sample_metadata_ch.into { sample_metadata_for_modern; sample_metadata_for_historical }
+
+modern_samples_ch = sample_metadata_for_modern
+    .filter { sample_id, era -> era != params.historical_era }
+    .map { sample_id, era -> tuple(sample_id, resolve_reads(sample_id)) }
+
+historical_samples_ch = sample_metadata_for_historical
+    .filter { sample_id, era -> era == params.historical_era }
+    .map { sample_id, era ->
+        def reads = resolve_reads(sample_id)
+        tuple(sample_id, reads[0], reads[1])
     }
-    .set { raw_reads_ch }
+
+historical_samples_ch.into { historical_samples_for_qc; historical_samples_for_mapping; historical_samples_for_trimlen }
+
+historical_read_paths_ch = historical_samples_for_trimlen
+    .flatMap { sample_id, r1, r2 -> [r1.toString(), r2.toString()] }
+    .collect()
 
 // --- Processes ---
 
@@ -64,14 +98,14 @@ process SPLIT_MERGED {
     publishDir "${params.outdir}/data/fastq", mode: 'copy'
 
     input:
-    tuple val(sample_id), path(merged_fq)
+    tuple val(sample_id), path(merged_fq), val(trim_len)
 
     output:
-    tuple val(sample_id), path("${sample_id}_trimmed_merged.L${params.trimlength}.fastq.gz")
+    tuple val(sample_id), path("${sample_id}_trimmed_merged.L${trim_len}.fastq.gz")
 
     script:
     """
-    bash ${params.split_script} ${merged_fq} ${sample_id}_trimmed_merged.L${params.trimlength}.fastq.gz ${params.trimlength}
+    bash ${params.split_script} ${merged_fq} ${sample_id}_trimmed_merged.L${trim_len}.fastq.gz ${trim_len}
     """
 }
 
@@ -121,15 +155,15 @@ process SEQTK_TRIM {
     publishDir "${params.outdir}/data/fastq", mode: 'copy'
 
     input:
-    tuple val(sample_id), path(r1), path(r2)
+    tuple val(sample_id), path(r1), path(r2), val(trim_len)
 
     output:
-    tuple val(sample_id), path("${sample_id}_R1_trimmed.L${params.trimlength}.fastq.gz"), path("${sample_id}_R2_trimmed.L${params.trimlength}.fastq.gz")
+    tuple val(sample_id), path("${sample_id}_R1_trimmed.L${trim_len}.fastq.gz"), path("${sample_id}_R2_trimmed.L${trim_len}.fastq.gz")
 
     script:
     """
-    seqtk trimfq -L ${params.trimlength} ${r1} | gzip > ${sample_id}_R1_trimmed.L${params.trimlength}.fastq.gz
-    seqtk trimfq -L ${params.trimlength} ${r2} | gzip > ${sample_id}_R2_trimmed.L${params.trimlength}.fastq.gz
+    seqtk trimfq -L ${trim_len} ${r1} | gzip > ${sample_id}_R1_trimmed.L${trim_len}.fastq.gz
+    seqtk trimfq -L ${trim_len} ${r2} | gzip > ${sample_id}_R2_trimmed.L${trim_len}.fastq.gz
     """
 }
 
@@ -148,6 +182,68 @@ process QC_UNMERGED {
     """
     fastqc -o . -t ${task.cpus} --extract ${r1}
     fastqc -o . -t ${task.cpus} --extract ${r2}
+    """
+}
+
+process PREP_REFERENCE_REPEAT {
+    publishDir "${params.outdir}/data/reference", mode: 'copy'
+
+    input:
+    path ref
+    path repeat_bed
+
+    output:
+    path "${params.reference_prefix}.repma.angsd.txt", emit: sites
+    path "${params.reference_prefix}.repma.angsd.txt.idx", emit: sites_idx
+    path "${params.reference_prefix}.repma.angsd.txt.bin", emit: sites_bin
+    path "${params.reference_prefix}.regions", emit: regions
+    path "${params.reference_prefix}.chrs", emit: chrs
+
+    script:
+    """
+    awk '{print \$1"\t"\$2+1"\t"\$3}' ${repeat_bed} > ${params.reference_prefix}.repma.angsd.txt
+    angsd sites index ${params.reference_prefix}.repma.angsd.txt
+    cut -f1 ${params.reference_prefix}.repma.angsd.txt | awk '!seen[\$0]++' | awk '{print \$0 ":"}' > ${params.reference_prefix}.regions
+    cut -f1 ${params.reference_prefix}.repma.angsd.txt | sort | uniq > ${params.reference_prefix}.chrs
+    """
+}
+
+process CALC_HISTORICAL_TRIMLEN {
+    publishDir "${params.outdir}/data/stats", mode: 'copy'
+
+    input:
+    val read_paths
+
+    output:
+    stdout emit: trim_len
+    path "historical_trimlength.txt", emit: trim_file
+
+    script:
+    def reads_list = read_paths.collect { "'${it}'" }.join(', ')
+    """
+    python3 - <<'PY'
+import gzip
+
+files = [${reads_list}]
+bases = 0
+reads = 0
+
+for fp in files:
+    with gzip.open(fp, 'rt') as handle:
+        for idx, line in enumerate(handle, 1):
+            if idx % 4 == 2:
+                bases += len(line.rstrip())
+                reads += 1
+
+trim_len = ${params.trimlength}
+if reads > 0:
+    trim_len = int(round(bases / reads))
+
+with open('historical_trimlength.txt', 'w') as out:
+    out.write(f"{trim_len}\\n")
+
+print(trim_len)
+PY
     """
 }
 
@@ -352,28 +448,51 @@ process AMBER {
 }
 
 workflow {
-    // 1. Trimming & Splitting
-    FASTP_MERGED(raw_reads_ch)
-    SPLIT_MERGED(FASTP_MERGED.out.merged)
-    FASTP_UNMERGED(FASTP_MERGED.out.unmerged)
-    SEQTK_TRIM(FASTP_UNMERGED.out[0])
+    ref_ch      = Channel.fromPath(params.reference).first()
+    ref_fai_ch  = Channel.fromPath("${params.reference}.fai").first()
+    ref_dict_ch = Channel.fromPath(params.reference.replaceAll(/\.fasta$/, '.dict')).first()
+    bed_ch      = Channel.fromPath(params.bed_file).first()
+
+    PREP_REFERENCE_REPEAT(ref_ch, bed_ch)
+    historical_trim_length_ch = CALC_HISTORICAL_TRIMLEN(historical_read_paths_ch)
+        .out
+        .trim_len
+        .map { it.trim() as Integer }
+
+    // 1. Modern branch: trim/merge/split while keeping merged and unmerged streams separate.
+    modern_fastp = FASTP_MERGED(modern_samples_ch)
+    modern_merged_trim_input = modern_fastp.out.merged
+        .combine(historical_trim_length_ch)
+        .map { sample_id, merged_fq, trim_len -> tuple(sample_id, merged_fq, trim_len) }
+    modern_merged_split = SPLIT_MERGED(modern_merged_trim_input)
+
+    modern_unmerged_fastp = FASTP_UNMERGED(modern_fastp.out.unmerged)
+    modern_unmerged_trim_input = modern_unmerged_fastp.out[0]
+        .combine(historical_trim_length_ch)
+        .map { sample_id, r1, r2, trim_len -> tuple(sample_id, r1, r2, trim_len) }
+    modern_unmerged_trimmed = SEQTK_TRIM(modern_unmerged_trim_input)
     
-    // 2. QC (New Split Logic)
-    QC_MERGED(SPLIT_MERGED.out)
-    QC_UNMERGED(SEQTK_TRIM.out)
+    // 2. QC
+    QC_MERGED(modern_merged_split.out)
+    QC_UNMERGED(modern_unmerged_trimmed.out)
+    if (params.run_historical_fastqc) {
+        QC_UNMERGED(historical_samples_for_qc)
+    }
     
-    // 3. Mapping (Per Lane)
-    BWA_MERGED(SPLIT_MERGED.out)
-    BWA_UNMERGED(SEQTK_TRIM.out)
+    // 3. Mapping (Per lane), still separated by stream type.
+    modern_bwa_merged = BWA_MERGED(modern_merged_split.out)
+    modern_bwa_unmerged = BWA_UNMERGED(modern_unmerged_trimmed.out)
+    historical_bwa_unmerged = BWA_UNMERGED(historical_samples_for_mapping)
 
     // 4. Mark Duplicates (Split Processes)
-    MARKDUP_MERGED(BWA_MERGED.out)
-    MARKDUP_UNMERGED(BWA_UNMERGED.out)
+    modern_markdup_merged = MARKDUP_MERGED(modern_bwa_merged.out)
+    modern_markdup_unmerged = MARKDUP_UNMERGED(modern_bwa_unmerged.out)
+    historical_markdup_unmerged = MARKDUP_UNMERGED(historical_bwa_unmerged.out)
 
     // 5. Merge BAMs (Per Biological Sample)
     // Mix both streams (merged & unmerged), convert Lane ID to Sample Name, then Group
-    MARKDUP_MERGED.out
-        .mix(MARKDUP_UNMERGED.out)
+    modern_markdup_merged.out
+        .mix(modern_markdup_unmerged.out)
         .map { id, bam -> 
             def sample_name = id.split('_')[0] // e.g. "TzoCMta031" from "TzoCMta031_1_22CVWFLT3L3"
             return [ sample_name, bam ]
@@ -381,18 +500,27 @@ workflow {
         .groupTuple() // Groups all BAMs (merged & unmerged) for "TzoCMta031"
         .set { bams_to_merge }
 
-    MERGE_BAMS(bams_to_merge)
+    modern_merge_bams = MERGE_BAMS(bams_to_merge)
+
+    historical_bams_to_merge = historical_markdup_unmerged.out
+        .map { id, bam ->
+            def sample_name = id.split('_')[0]
+            return [ sample_name, bam ]
+        }
+        .groupTuple()
+
+    historical_merge_bams = MERGE_BAMS(historical_bams_to_merge)
     
     // 6. Indel Realign & QC
-    ref_ch      = Channel.fromPath(params.reference).first()
-    ref_fai_ch  = Channel.fromPath("${params.reference}.fai").first()
-    ref_dict_ch = Channel.fromPath(params.reference.replaceAll(/\.fasta$/, '.dict')).first()
-
-    INDEL_REALN(MERGE_BAMS.out, ref_ch, ref_fai_ch, ref_dict_ch)
-    INDEX_REALIGNED(INDEL_REALN.out)
+    modern_realn = INDEL_REALN(modern_merge_bams.out, ref_ch, ref_fai_ch, ref_dict_ch)
+    modern_indexed = INDEX_REALIGNED(modern_realn.out)
     
     // Run Depth QC
-    BAM_QC(INDEX_REALIGNED.out)
+    BAM_QC(modern_indexed.out)
+
+    historical_realn = INDEL_REALN(historical_merge_bams.out, ref_ch, ref_fai_ch, ref_dict_ch)
+    historical_indexed = INDEX_REALIGNED(historical_realn.out)
+    BAM_QC(historical_indexed.out)
 
     // Run AMBER (Prep -> Run)
     // AMBER_PREP(INDEX_REALIGNED.out)
