@@ -10,6 +10,8 @@ params.bed_file     = "${projectDir}/data/reference/<reference>.repma.bed"
 params.reference_prefix = params.reference.tokenize('/').last().replaceAll(/\.(fa|fasta|fna)$/, '')
 params.historical_era = "historical"
 params.run_historical_fastqc = false
+params.run_historical_mapdamage = false
+params.use_historical_rescaled = false
 params.split_script = "${projectDir}/scripts/split_reads.sh"
 params.rmdup_script = "${projectDir}/scripts/samremovedup.py"
 params.amber_script = "/home/mdehasqu/TOOLS/AMBER/AMBER" // Ignore this.
@@ -47,22 +49,19 @@ sample_metadata_ch = samplesheet_file.exists() ?
         .filter { it.length() > 0 }
         .map { sample_id -> tuple(sample_id, 'modern') }
 
-sample_metadata_ch.into { sample_metadata_for_modern; sample_metadata_for_historical }
-
-modern_samples_ch = sample_metadata_for_modern
+modern_samples_ch = sample_metadata_ch
     .filter { sample_id, era -> era != params.historical_era }
     .map { sample_id, era -> tuple(sample_id, resolve_reads(sample_id)) }
 
-historical_samples_ch = sample_metadata_for_historical
+historical_samples_ch = sample_metadata_ch
     .filter { sample_id, era -> era == params.historical_era }
     .map { sample_id, era ->
         def reads = resolve_reads(sample_id)
         tuple(sample_id, reads[0], reads[1])
     }
 
-historical_samples_ch.into { historical_samples_for_qc; historical_samples_for_mapping; historical_samples_for_trimlen }
-
-historical_read_paths_ch = historical_samples_for_trimlen
+// For historical reads: extract paths for trim length calculation
+historical_read_paths_ch = historical_samples_ch
     .flatMap { sample_id, r1, r2 -> [r1.toString(), r2.toString()] }
     .collect()
 
@@ -251,7 +250,7 @@ process BWA_MERGED {
     tag "$sample_id"
 
     input:
-    tuple val(sample_id), path(merged_fq)
+    tuple val(sample_id), path(merged_fq), val(mapper)
 
     output:
     tuple val(sample_id), path("${sample_id}_trimmed_merged.L${params.trimlength}.sorted.bam")
@@ -262,21 +261,30 @@ process BWA_MERGED {
     def lib  = fields[1]
     def rg   = fields[2]
     
-    """
-    bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${params.reference} ${merged_fq} > ${sample_id}.sai
-    
-    bwa samse -r "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
-        ${params.reference} ${sample_id}.sai ${merged_fq} \
-        | samtools view -q${params.bam_q} -F 4 -@ ${task.cpus} -bSh - \
-        | samtools sort -m 4G -o ${sample_id}_trimmed_merged.L${params.trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
-    """
+    if (mapper == "aln") {
+        """
+        bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${params.reference} ${merged_fq} > ${sample_id}.sai
+        
+        bwa samse -r "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
+            ${params.reference} ${sample_id}.sai ${merged_fq} \
+            | samtools view -q${params.bam_q} -F 4 -@ ${task.cpus} -bSh - \
+            | samtools sort -m 4G -o ${sample_id}_trimmed_merged.L${params.trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
+        """
+    } else {
+        """
+        bwa mem -R "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
+            -t ${task.cpus} ${params.reference} ${merged_fq} \
+            | samtools view -q${params.bam_q} -F 4 -@ ${task.cpus} -bSh - \
+            | samtools sort -m 4G -o ${sample_id}_trimmed_merged.L${params.trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
+        """
+    }
 }
 
 process BWA_UNMERGED {
     tag "$sample_id"
 
     input:
-    tuple val(sample_id), path(r1), path(r2)
+    tuple val(sample_id), path(r1), path(r2), val(mapper)
 
     output:
     tuple val(sample_id), path("${sample_id}.L${params.trimlength}.sorted.bam")
@@ -287,16 +295,25 @@ process BWA_UNMERGED {
     def lib  = fields[1]
     def rg   = fields[2]
 
-    """
-    bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${params.reference} ${r1} > ${sample_id}_R1.sai
-    bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${params.reference} ${r2} > ${sample_id}_R2.sai
+    if (mapper == "aln") {
+        """
+        bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${params.reference} ${r1} > ${sample_id}_R1.sai
+        bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${params.reference} ${r2} > ${sample_id}_R2.sai
 
-    bwa sampe \
-        -r "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
-        ${params.reference} ${sample_id}_R1.sai ${sample_id}_R2.sai ${r1} ${r2} \
-        | samtools view -q${params.bam_q} -F 4 -@ ${task.cpus} -bSh - \
-        | samtools sort -m 4G -o ${sample_id}.L${params.trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
-    """
+        bwa sampe \
+            -r "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
+            ${params.reference} ${sample_id}_R1.sai ${sample_id}_R2.sai ${r1} ${r2} \
+            | samtools view -q${params.bam_q} -F 4 -@ ${task.cpus} -bSh - \
+            | samtools sort -m 4G -o ${sample_id}.L${params.trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
+        """
+    } else {
+        """
+        bwa mem -R "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
+            -t ${task.cpus} ${params.reference} ${r1} ${r2} \
+            | samtools view -q${params.bam_q} -F 4 -@ ${task.cpus} -bSh - \
+            | samtools sort -m 4G -o ${sample_id}.L${params.trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
+        """
+    }
 }
 
 process MARKDUP_MERGED {
@@ -410,6 +427,39 @@ process BAM_QC {
     """
 }
 
+process MAPDAMAGE {
+    tag "$sample_name"
+    publishDir "${params.outdir}/data/mapdamage", mode: 'copy', pattern: "*.{pdf,txt}"
+
+    input:
+    tuple val(sample_name), path(bam), path(bai)
+    path ref
+
+    output:
+    tuple val(sample_name), path("${sample_name}.rescaled.bam"), path("${sample_name}.rescaled.bam.bai"), emit: rescaled_indexed
+    path "*.pdf", emit: plots, optional: true
+    path "*.txt", emit: stats, optional: true
+
+    script:
+    """
+    # Run mapDamage for damage assessment and rescaling
+    mapDamage -i ${bam} -r ${ref} -d mapd_output -y
+    
+    # Copy rescaled BAM to standard output name
+    if [ -f mapd_output/rescaled.bam ]; then
+        cp mapd_output/rescaled.bam ${sample_name}.rescaled.bam
+        samtools index ${sample_name}.rescaled.bam
+    else
+        echo "Error: mapDamage did not produce rescaled.bam" >&2
+        exit 1
+    fi
+    
+    # Copy report files
+    cp mapd_output/*.pdf . 2>/dev/null || true
+    cp mapd_output/*.txt . 2>/dev/null || true
+    """
+}
+
 process AMBER_PREP {
     tag "$sample_name"
     
@@ -453,44 +503,60 @@ workflow {
     ref_dict_ch = Channel.fromPath(params.reference.replaceAll(/\.fasta$/, '.dict')).first()
     bed_ch      = Channel.fromPath(params.bed_file).first()
 
+    // 0. Setup: Prepare reference repeat mask and calculate trim length from historical reads
     PREP_REFERENCE_REPEAT(ref_ch, bed_ch)
-    historical_trim_length_ch = CALC_HISTORICAL_TRIMLEN(historical_read_paths_ch)
-        .out
-        .trim_len
-        .map { it.trim() as Integer }
+    hist_trim_output = CALC_HISTORICAL_TRIMLEN(historical_read_paths_ch)
+    historical_trim_length_ch = hist_trim_output.trim_len
+        .map { it.trim() }
+        .map { it as Integer }
+    
+    // Determine mapper based on trim length: aln for <= 80bp, mem for > 80bp
+    mapper_ch = historical_trim_length_ch.map { trim_len -> trim_len <= 80 ? "aln" : "mem" }
 
-    // 1. Modern branch: trim/merge/split while keeping merged and unmerged streams separate.
+    // ===== MODERN SAMPLES BRANCH =====
+    // Modern reads are trimmed to the historical average length.
+    // Merged and unmerged streams are kept separate throughout processing.
+    
+    // 1.Modern FASTP: merge/split reads
     modern_fastp = FASTP_MERGED(modern_samples_ch)
+    
+    // 1.Modern merged: trim to computed length, then map
     modern_merged_trim_input = modern_fastp.out.merged
         .combine(historical_trim_length_ch)
         .map { sample_id, merged_fq, trim_len -> tuple(sample_id, merged_fq, trim_len) }
     modern_merged_split = SPLIT_MERGED(modern_merged_trim_input)
 
+    // 1.Modern unmerged: trim to computed length, then map
     modern_unmerged_fastp = FASTP_UNMERGED(modern_fastp.out.unmerged)
     modern_unmerged_trim_input = modern_unmerged_fastp.out[0]
         .combine(historical_trim_length_ch)
         .map { sample_id, r1, r2, trim_len -> tuple(sample_id, r1, r2, trim_len) }
     modern_unmerged_trimmed = SEQTK_TRIM(modern_unmerged_trim_input)
     
-    // 2. QC
+    // Combine modern reads with mapper choice for mapping
+    modern_merged_for_mapping = modern_merged_split.out
+        .combine(mapper_ch)
+        .map { sample_id, merged_fq, mapper -> tuple(sample_id, merged_fq, mapper) }
+    modern_unmerged_for_mapping = modern_unmerged_trimmed.out
+        .combine(mapper_ch)
+        .map { sample_id, r1, r2, mapper -> tuple(sample_id, r1, r2, mapper) }
+    
+    // 2.Modern QC: FastQC on trimmed reads
     QC_MERGED(modern_merged_split.out)
     QC_UNMERGED(modern_unmerged_trimmed.out)
-    if (params.run_historical_fastqc) {
-        QC_UNMERGED(historical_samples_for_qc)
-    }
     
-    // 3. Mapping (Per lane), still separated by stream type.
-    modern_bwa_merged = BWA_MERGED(modern_merged_split.out)
-    modern_bwa_unmerged = BWA_UNMERGED(modern_unmerged_trimmed.out)
-    historical_bwa_unmerged = BWA_UNMERGED(historical_samples_for_mapping)
+    // 3.Modern mapper and read preparation for mapping
+    // (mapper selection combined with trimmed reads from step 1)
+    
+    // 3.Modern mapping: Separate merged/unmerged mapping per lane with selected mapper
+    modern_bwa_merged = BWA_MERGED(modern_merged_for_mapping)
+    modern_bwa_unmerged = BWA_UNMERGED(modern_unmerged_for_mapping)
 
-    // 4. Mark Duplicates (Split Processes)
+    // 4.Modern duplicate removal: separate processes for merged/unmerged
     modern_markdup_merged = MARKDUP_MERGED(modern_bwa_merged.out)
     modern_markdup_unmerged = MARKDUP_UNMERGED(modern_bwa_unmerged.out)
-    historical_markdup_unmerged = MARKDUP_UNMERGED(historical_bwa_unmerged.out)
 
-    // 5. Merge BAMs (Per Biological Sample)
-    // Mix both streams (merged & unmerged), convert Lane ID to Sample Name, then Group
+    // 5.Modern BAM merge: combine merged+unmerged per biological sample
     modern_markdup_merged.out
         .mix(modern_markdup_unmerged.out)
         .map { id, bam -> 
@@ -499,30 +565,96 @@ workflow {
         }
         .groupTuple() // Groups all BAMs (merged & unmerged) for "TzoCMta031"
         .set { bams_to_merge }
-
     modern_merge_bams = MERGE_BAMS(bams_to_merge)
 
-    historical_bams_to_merge = historical_markdup_unmerged.out
+    // 6.Modern indel realignment and final BAM QC
+    modern_realn = INDEL_REALN(modern_merge_bams.out, ref_ch, ref_fai_ch, ref_dict_ch)
+    modern_indexed = INDEX_REALIGNED(modern_realn.out)
+    BAM_QC(modern_indexed.out)
+
+    // ===== HISTORICAL SAMPLES BRANCH =====
+    // Historical reads are NOT trimmed by length (seqtk).
+    // Merged and unmerged streams are kept separate throughout processing,
+    // then merged per biological sample (just like modern).
+    
+    // 1.Historical FASTP: create merged/unmerged streams (no length trimming)
+    historical_fastp_input = historical_samples_ch
+        .map { sample_id, r1, r2 -> tuple(sample_id, [r1, r2]) }
+    historical_fastp = FASTP_MERGED(historical_fastp_input)
+    historical_unmerged_fastp = FASTP_UNMERGED(historical_fastp.out.unmerged)
+    
+    // Combine historical reads with mapper choice for mapping
+    historical_merged_for_mapping = historical_fastp.out.merged
+        .combine(mapper_ch)
+        .map { sample_id, merged_fq, mapper -> tuple(sample_id, merged_fq, mapper) }
+    historical_unmerged_for_mapping = historical_unmerged_fastp.out[0]
+        .combine(mapper_ch)
+        .map { sample_id, r1, r2, mapper -> tuple(sample_id, r1, r2, mapper) }
+
+    // 2.Historical QC: FastQC on untrimmed merged/unmerged (optional)
+    if (params.run_historical_fastqc) {
+        QC_MERGED(historical_fastp.out.merged)
+        QC_UNMERGED(historical_unmerged_fastp.out[0])
+    }
+    
+    // 3.Historical mapper and read preparation for mapping
+    // (mapper selection combined with fastp-processed reads from step 1)
+    
+    // 3.Historical mapping: Separate merged/unmerged mapping per lane (no trim) with selected mapper
+    historical_bwa_merged = BWA_MERGED(historical_merged_for_mapping)
+    historical_bwa_unmerged = BWA_UNMERGED(historical_unmerged_for_mapping)
+
+    // 4.Historical duplicate removal: separate processes for merged/unmerged
+    historical_markdup_merged = MARKDUP_MERGED(historical_bwa_merged.out)
+    historical_markdup_unmerged = MARKDUP_UNMERGED(historical_bwa_unmerged.out)
+
+    // 5.Historical BAM merge: combine merged+unmerged per biological sample
+    historical_bams_to_merge = historical_markdup_merged.out
+        .mix(historical_markdup_unmerged.out)
         .map { id, bam ->
             def sample_name = id.split('_')[0]
             return [ sample_name, bam ]
         }
         .groupTuple()
-
     historical_merge_bams = MERGE_BAMS(historical_bams_to_merge)
-    
-    // 6. Indel Realign & QC
-    modern_realn = INDEL_REALN(modern_merge_bams.out, ref_ch, ref_fai_ch, ref_dict_ch)
-    modern_indexed = INDEX_REALIGNED(modern_realn.out)
-    
-    // Run Depth QC
-    BAM_QC(modern_indexed.out)
 
+    // 6.Historical indel realignment and final BAM QC
     historical_realn = INDEL_REALN(historical_merge_bams.out, ref_ch, ref_fai_ch, ref_dict_ch)
     historical_indexed = INDEX_REALIGNED(historical_realn.out)
     BAM_QC(historical_indexed.out)
 
-    // Run AMBER (Prep -> Run)
+    // 7. Optional historical mapDamage: rescale and emit rescaled BAMs for downstream use
+    // (modern samples skip this step)
+    if (params.run_historical_mapdamage) {
+        historical_mapdamage = MAPDAMAGE(historical_indexed.out, ref_ch)
+        // 8. QC on rescaled BAMs to track coverage changes after mapDamage rescaling
+        // (modern samples skip this step; historical original BAMs still get QC in step 6.B)
+        BAM_QC(historical_mapdamage.out.rescaled_indexed)
+    }
+
+    // 9. Wire cleaned BAMs into ANGSD downstream modules
+    // Modern samples always use the final cleaned BAMs from realignment and indexing
+    modern_bams_for_angsd = modern_indexed.out
+        .map { sample_name, bam, bai -> tuple(sample_name, "modern", bam, bai) }
+    
+    // Historical samples use either original or rescaled BAMs depending on configuration
+    if (params.run_historical_mapdamage && params.use_historical_rescaled) {
+        // Use rescaled BAMs when mapDamage is enabled and rescaled variant is requested
+        historical_bams_for_angsd = historical_mapdamage.out.rescaled_indexed
+            .map { sample_name, bam, bai -> tuple(sample_name, "historical_rescaled", bam, bai) }
+    } else {
+        // Use original BAMs (either because mapDamage is off, or mapDamage is on but original variant requested)
+        historical_bams_for_angsd = historical_indexed.out
+            .map { sample_name, bam, bai -> tuple(sample_name, "historical_original", bam, bai) }
+    }
+    
+    // Combine modern and historical BAMs into single output channel for ANGSD
+    // Format: tuple(sample_name, bam_type, bam_file, bam_index)
+    // where bam_type is one of: "modern", "historical_original", "historical_rescaled"
+    // Downstream ANGSD modules can filter by sample class or use all samples together
+    bams_for_angsd = modern_bams_for_angsd.mix(historical_bams_for_angsd)
+
+    // Run AMBER (Prep -> Run) [currently commented out]
     // AMBER_PREP(INDEX_REALIGNED.out)
     // AMBER(AMBER_PREP.out)
 }
