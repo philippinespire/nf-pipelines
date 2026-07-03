@@ -7,17 +7,19 @@ params.indir        = "${projectDir}/data/symlinks"
 params.outdir       = "${projectDir}/results" 
 params.reference    = "${projectDir}/data/reference/<reference>.fasta"
 params.bed_file     = "${projectDir}/data/reference/<reference>.repma.bed"
-params.reference_prefix = params.reference.tokenize('/').last().replaceAll(/\.(fa|fasta|fna)$/, '')
-params.historical_era = "historical"
-params.run_historical_fastqc = false
+params.reference_prefix         = params.reference.tokenize('/').last().replaceAll(/\.(fa|fasta|fna)$/, '')
+params.historical_era           = "historical"
+params.run_historical_fastqc    = false
 params.run_historical_mapdamage = false
-params.use_historical_rescaled = false
+params.use_historical_rescaled  = false
+params.run_historical_amber     = false
+params.run_modern_amber         = false
 params.split_script = "${projectDir}/scripts/split_reads.sh"
 params.rmdup_script = "${projectDir}/scripts/samremovedup.py"
-params.amber_script = "/home/mdehasqu/TOOLS/AMBER/AMBER" // Ignore this.
+params.amber_script = "/archive/carpenterlab/pire/softwares/AMBERv2/AMBER" 
 params.bwa_threads  = 4
 params.bam_q        = 1 // Mapping quality. Currently set to 1 simply to remove unmapped reads. 
-params.trimlength   = 85
+params.trimlength   = 85 // the default trim length if no historical reads are available to calculate it from
 
 def resolve_reads = { String sample_id ->
     def r1 = file("${params.indir}/${sample_id}_R1.fastq.gz")
@@ -61,13 +63,16 @@ historical_samples_ch = sample_metadata_ch
     }
 
 // For historical reads: extract paths for trim length calculation
-historical_read_paths_ch = historical_samples_ch
-    .flatMap { sample_id, r1, r2 -> [r1.toString(), r2.toString()] }
-    .collect()
+    historical_read_paths_ch = historical_samples_ch
+        .flatMap { sample_id, r1, r2 -> [r1.toString(), r2.toString()] }
+        .collect()
 
 // --- Processes ---
 
+
 process FASTP_MERGED {
+    // takes paired-end raw sequencing reads, cleans them up (quality filtering, adapter trimming, poly-G tail removal), 
+    // and attempts to merge overlapping forward and reverse reads into single, longer reads.
     tag "$sample_id"
     publishDir "${params.outdir}/data/stats", mode: 'copy', pattern: "*.{html,json}"
 
@@ -93,6 +98,9 @@ process FASTP_MERGED {
 }
 
 process SPLIT_MERGED {
+    // processes a FASTQ file and splits any read that is >trim_len right down the middle, 
+    // turning a single long read into two "pseudo-paired" reads. 
+    // Any read that is already shorter than your target length is left completely untouched.
     tag "$sample_id"
     publishDir "${params.outdir}/data/fastq", mode: 'copy'
 
@@ -104,6 +112,8 @@ process SPLIT_MERGED {
 
     script:
     """
+    echo "Looking for script at: ${params.split_script}"
+    ls -l ${params.split_script}
     bash ${params.split_script} ${merged_fq} ${sample_id}_trimmed_merged.L${trim_len}.fastq.gz ${trim_len}
     """
 }
@@ -126,6 +136,7 @@ process QC_MERGED {
 }
 
 process FASTP_UNMERGED {
+    // filters, trims, and generates quality reports for the unmerged paired-end reads, keeping them separate
     tag "$sample_id"
     publishDir "${params.outdir}/data/stats", mode: 'copy', pattern: "*.{html,json}"
 
@@ -150,6 +161,8 @@ process FASTP_UNMERGED {
 }
 
 process SEQTK_TRIM {
+    // takes unmerged paired-end reads (the ones that didn't overlap enough to be combined) 
+    // and cleanly truncates them down to a strict maximum length (trim_len) using seqtk
     tag "$sample_id"
     publishDir "${params.outdir}/data/fastq", mode: 'copy'
 
@@ -221,32 +234,47 @@ process CALC_HISTORICAL_TRIMLEN {
     def reads_list = read_paths.collect { "'${it}'" }.join(', ')
     """
     python3 - <<'PY'
-import gzip
+    import gzip
 
-files = [${reads_list}]
-bases = 0
-reads = 0
+    # List of gzipped FASTQ file paths dynamically injected by Nextflow
+    files = [${reads_list}]
+    
+    # Counters to track the total number of nucleotides (bases) and individual reads
+    bases = 0
+    reads = 0
 
-for fp in files:
-    with gzip.open(fp, 'rt') as handle:
-        for idx, line in enumerate(handle, 1):
-            if idx % 4 == 2:
-                bases += len(line.rstrip())
-                reads += 1
+    # Iterate through each FASTQ file provided in the list
+    for fp in files:
+        # Open the compressed gzip file in text read mode ('rt')
+        with gzip.open(fp, 'rt') as handle:
+            # Loop through lines, starting the index at 1 for clean 4-line block matching
+            for idx, line in enumerate(handle, 1):
+                # FASTQ records have a strict 4-line structure: Header, Sequence, Spacer (+), Quality.
+                # 'idx % 4 == 2' targets line 2 of every record, which is the actual DNA sequence.
+                if idx % 4 == 2:
+                    # Remove trailing newline characters and add the sequence length to the total
+                    bases += len(line.rstrip())
+                    # Increment the total read count
+                    reads += 1
 
-trim_len = ${params.trimlength}
-if reads > 0:
-    trim_len = int(round(bases / reads))
+    # Initialize the target length with the pipeline's default fallback value
+    trim_len = ${params.trimlength}
+    
+    # If reads were successfully found and parsed, calculate the true mathematical mean
+    if reads > 0:
+        trim_len = int(round(bases / reads))
 
-with open('historical_trimlength.txt', 'w') as out:
-    out.write(f"{trim_len}\\n")
+    # Write the resulting calculated length to a local text file for provenance tracking
+    with open('historical_trimlength.txt', 'w') as out:
+        out.write(f"{trim_len}\\n")
 
-print(trim_len)
-PY
-    """
+    # Print to standard output so Nextflow can capture this value directly into a channel (.out)
+    print(trim_len)
+    PY
 }
 
 process BWA_MERGED {
+    // map the merged reads
     tag "$sample_id"
 
     input:
@@ -281,6 +309,7 @@ process BWA_MERGED {
 }
 
 process BWA_UNMERGED {
+    // map the unmerged reads
     tag "$sample_id"
 
     input:
@@ -430,6 +459,7 @@ process BAM_QC {
 process MAPDAMAGE {
     tag "$sample_name"
     publishDir "${params.outdir}/data/mapdamage", mode: 'copy', pattern: "*.{pdf,txt}"
+    module 'container_env:mapdamage2' // not sure this is needed, but it doesn't hurt to load the module
 
     input:
     tuple val(sample_name), path(bam), path(bai)
@@ -443,7 +473,7 @@ process MAPDAMAGE {
     script:
     """
     # Run mapDamage for damage assessment and rescaling
-    mapDamage -i ${bam} -r ${ref} -d mapd_output -y
+    crun mapDamage -i ${bam} -r ${ref} -d mapd_output -y
     
     # Copy rescaled BAM to standard output name
     if [ -f mapd_output/rescaled.bam ]; then
@@ -497,6 +527,133 @@ process AMBER {
     """
 }
 
+workflow MODERN_PIPELINE {
+    take:
+    modern_samples
+    trim_length_ch
+    mapper_choice_ch
+    ref_ch
+    ref_fai_ch
+    ref_dict_ch
+
+    main:
+    modern_fastp = FASTP_MERGED(modern_samples)
+
+    modern_merged_trim_input = modern_fastp.merged
+        .combine(trim_length_ch)
+        .map { sample_id, merged_fq, trim_len -> tuple(sample_id, merged_fq, trim_len) }
+    modern_merged_split = SPLIT_MERGED(modern_merged_trim_input)
+
+    modern_unmerged_fastp = FASTP_UNMERGED(modern_fastp.unmerged)
+    modern_unmerged_trim_input = modern_unmerged_fastp[0]
+        .combine(trim_length_ch)
+        .map { sample_id, r1, r2, trim_len -> tuple(sample_id, r1, r2, trim_len) }
+    modern_unmerged_trimmed = SEQTK_TRIM(modern_unmerged_trim_input)
+
+    modern_merged_for_mapping = modern_merged_split
+        .combine(mapper_choice_ch)
+        .map { sample_id, merged_fq, mapper -> tuple(sample_id, merged_fq, mapper) }
+    modern_unmerged_for_mapping = modern_unmerged_trimmed
+        .combine(mapper_choice_ch)
+        .map { sample_id, r1, r2, mapper -> tuple(sample_id, r1, r2, mapper) }
+
+    QC_MERGED(modern_merged_split)
+    QC_UNMERGED(modern_unmerged_trimmed)
+
+    modern_bwa_merged = BWA_MERGED(modern_merged_for_mapping)
+    modern_bwa_unmerged = BWA_UNMERGED(modern_unmerged_for_mapping)
+
+    modern_markdup_merged = MARKDUP_MERGED(modern_bwa_merged)
+    modern_markdup_unmerged = MARKDUP_UNMERGED(modern_bwa_unmerged)
+
+    modern_markdup_merged
+        .mix(modern_markdup_unmerged)
+        .map { id, bam ->
+            def sample_name = id.split('_')[0]
+            [sample_name, bam]
+        }
+        .groupTuple()
+        .set { modern_bams_to_merge }
+    modern_merge_bams = MERGE_BAMS(modern_bams_to_merge)
+
+    modern_realn = INDEL_REALN(modern_merge_bams, ref_ch, ref_fai_ch, ref_dict_ch)
+    modern_indexed = INDEX_REALIGNED(modern_realn)
+    BAM_QC(modern_indexed)
+
+    // Optional AMBER analysis
+    if (params.run_modern_amber) {
+        AMBER_PREP(modern_indexed)
+        AMBER(AMBER_PREP.out)
+    }
+
+    emit:
+    indexed = modern_indexed
+}
+
+workflow HISTORICAL_PIPELINE {
+    // takes the output of FASTP directly, instead of the file paths like the modern pipeline
+    // because the historical pipeline is designed to work with the cleaned reads from FASTP, 
+    // which are already in the correct format for mapping and downstream processing.
+    take:
+    historical_merged_ch
+    historical_unmerged_ch
+    mapper_choice_ch
+    ref_ch
+    ref_fai_ch
+    ref_dict_ch
+
+    main:
+    // redundant? since FASTP_MERGED already cleaned the reads with the same parameters
+    historical_unmerged_fastp = FASTP_UNMERGED(historical_unmerged_ch)
+
+    historical_merged_for_mapping = historical_merged_ch
+        .combine(mapper_choice_ch)
+        .map { sample_id, merged_fq, mapper -> tuple(sample_id, merged_fq, mapper) }
+    historical_unmerged_for_mapping = historical_unmerged_fastp[0]
+        .combine(mapper_choice_ch)
+        .map { sample_id, r1, r2, mapper -> tuple(sample_id, r1, r2, mapper) }
+
+    if (params.run_historical_fastqc) {
+        QC_MERGED(historical_merged_ch)
+        QC_UNMERGED(historical_unmerged_fastp[0])
+    }
+
+    historical_bwa_merged = BWA_MERGED(historical_merged_for_mapping)
+    historical_bwa_unmerged = BWA_UNMERGED(historical_unmerged_for_mapping)
+
+    historical_markdup_merged = MARKDUP_MERGED(historical_bwa_merged)
+    historical_markdup_unmerged = MARKDUP_UNMERGED(historical_bwa_unmerged)
+
+    historical_markdup_merged
+        .mix(historical_markdup_unmerged)
+        .map { id, bam ->
+            def sample_name = id.split('_')[0]
+            [sample_name, bam]
+        }
+        .groupTuple()
+        .set { historical_bams_to_merge }
+    historical_merge_bams = MERGE_BAMS(historical_bams_to_merge)
+
+    historical_realn = INDEL_REALN(historical_merge_bams, ref_ch, ref_fai_ch, ref_dict_ch)
+    historical_indexed = INDEX_REALIGNED(historical_realn)
+    BAM_QC(historical_indexed)
+
+    historical_rescaled = Channel.empty()
+    if (params.run_historical_mapdamage) {
+        historical_mapdamage = MAPDAMAGE(historical_indexed, ref_ch)
+        historical_rescaled = historical_mapdamage.rescaled_indexed
+    }
+
+    if (params.run_historical_amber) {
+        AMBER_PREP(historical_indexed)
+        AMBER(AMBER_PREP.out)
+    }
+
+    emit:
+    indexed = historical_indexed
+    rescaled = historical_rescaled
+}
+
 workflow {
     ref_ch      = Channel.fromPath(params.reference).first()
     ref_fai_ch  = Channel.fromPath("${params.reference}.fai").first()
@@ -505,156 +662,58 @@ workflow {
 
     // 0. Setup: Prepare reference repeat mask and calculate trim length from historical reads
     PREP_REFERENCE_REPEAT(ref_ch, bed_ch)
-    hist_trim_output = CALC_HISTORICAL_TRIMLEN(historical_read_paths_ch)
+
+    // 1. Run FASTP on historical reads immediately to generate unmerged reads
+    historical_fastp_input = historical_samples_ch
+        .map { sample_id, r1, r2 -> tuple(sample_id, [r1, r2]) }    
+    historical_fastp = FASTP_MERGED(historical_fastp_input)
+
+    // 2. Extract the paths from the unmerged output and pass to read length calculation
+    // `.flatMap` breaks the tuples down into a flat stream, `.collect` packs them into a single list
+    historical_unmerged_paths_ch = historical_fastp.unmerged
+        .flatMap { sample_id, r1, r2 -> [r1, r2] }
+        .collect()
+
+    hist_trim_output = CALC_HISTORICAL_TRIMLEN(historical_unmerged_paths_ch)
+    
     historical_trim_length_ch = hist_trim_output.trim_len
         .map { it.trim() }
         .map { it as Integer }
-    
-    // Determine mapper based on trim length: aln for <= 80bp, mem for > 80bp
-    mapper_ch = historical_trim_length_ch.map { trim_len -> trim_len <= 80 ? "aln" : "mem" }
 
-    // ===== MODERN SAMPLES BRANCH =====
-    // Modern reads are trimmed to the historical average length.
-    // Merged and unmerged streams are kept separate throughout processing.
-    
-    // 1.Modern FASTP: merge/split reads
-    modern_fastp = FASTP_MERGED(modern_samples_ch)
-    
-    // 1.Modern merged: trim to computed length, then map
-    modern_merged_trim_input = modern_fastp.out.merged
-        .combine(historical_trim_length_ch)
-        .map { sample_id, merged_fq, trim_len -> tuple(sample_id, merged_fq, trim_len) }
-    modern_merged_split = SPLIT_MERGED(modern_merged_trim_input)
+    // 3. Determine mapper based on trim length: aln for <= 80bp, mem for > 80bp
+    // and log the output
+    mapper_ch = historical_trim_length_ch.map { trim_len -> 
+        def mapper = trim_len <= 80 ? "aln" : "mem"
+        
+        // This writes directly to the console output and the hidden .nextflow.log file
+        log.info """
+        ===================================================================
+         PIPELINE CONFIGURATION RESOLVED:
+         -> Calculated Historical Trim Length : ${trim_len} bp
+         -> Chosen Alignment Mapper           : bwa ${mapper}
+        ===================================================================
+        """.stripIndent()
 
-    // 1.Modern unmerged: trim to computed length, then map
-    modern_unmerged_fastp = FASTP_UNMERGED(modern_fastp.out.unmerged)
-    modern_unmerged_trim_input = modern_unmerged_fastp.out[0]
-        .combine(historical_trim_length_ch)
-        .map { sample_id, r1, r2, trim_len -> tuple(sample_id, r1, r2, trim_len) }
-    modern_unmerged_trimmed = SEQTK_TRIM(modern_unmerged_trim_input)
-    
-    // Combine modern reads with mapper choice for mapping
-    modern_merged_for_mapping = modern_merged_split.out
-        .combine(mapper_ch)
-        .map { sample_id, merged_fq, mapper -> tuple(sample_id, merged_fq, mapper) }
-    modern_unmerged_for_mapping = modern_unmerged_trimmed.out
-        .combine(mapper_ch)
-        .map { sample_id, r1, r2, mapper -> tuple(sample_id, r1, r2, mapper) }
-    
-    // 2.Modern QC: FastQC on trimmed reads
-    QC_MERGED(modern_merged_split.out)
-    QC_UNMERGED(modern_unmerged_trimmed.out)
-    
-    // 3.Modern mapper and read preparation for mapping
-    // (mapper selection combined with trimmed reads from step 1)
-    
-    // 3.Modern mapping: Separate merged/unmerged mapping per lane with selected mapper
-    modern_bwa_merged = BWA_MERGED(modern_merged_for_mapping)
-    modern_bwa_unmerged = BWA_UNMERGED(modern_unmerged_for_mapping)
-
-    // 4.Modern duplicate removal: separate processes for merged/unmerged
-    modern_markdup_merged = MARKDUP_MERGED(modern_bwa_merged.out)
-    modern_markdup_unmerged = MARKDUP_UNMERGED(modern_bwa_unmerged.out)
-
-    // 5.Modern BAM merge: combine merged+unmerged per biological sample
-    modern_markdup_merged.out
-        .mix(modern_markdup_unmerged.out)
-        .map { id, bam -> 
-            def sample_name = id.split('_')[0] // e.g. "TzoCMta031" from "TzoCMta031_1_22CVWFLT3L3"
-            return [ sample_name, bam ]
-        }
-        .groupTuple() // Groups all BAMs (merged & unmerged) for "TzoCMta031"
-        .set { bams_to_merge }
-    modern_merge_bams = MERGE_BAMS(bams_to_merge)
-
-    // 6.Modern indel realignment and final BAM QC
-    modern_realn = INDEL_REALN(modern_merge_bams.out, ref_ch, ref_fai_ch, ref_dict_ch)
-    modern_indexed = INDEX_REALIGNED(modern_realn.out)
-    BAM_QC(modern_indexed.out)
-
-    // ===== HISTORICAL SAMPLES BRANCH =====
-    // Historical reads are NOT trimmed by length (seqtk).
-    // Merged and unmerged streams are kept separate throughout processing,
-    // then merged per biological sample (just like modern).
-    
-    // 1.Historical FASTP: create merged/unmerged streams (no length trimming)
-    historical_fastp_input = historical_samples_ch
-        .map { sample_id, r1, r2 -> tuple(sample_id, [r1, r2]) }
-    historical_fastp = FASTP_MERGED(historical_fastp_input)
-    historical_unmerged_fastp = FASTP_UNMERGED(historical_fastp.out.unmerged)
-    
-    // Combine historical reads with mapper choice for mapping
-    historical_merged_for_mapping = historical_fastp.out.merged
-        .combine(mapper_ch)
-        .map { sample_id, merged_fq, mapper -> tuple(sample_id, merged_fq, mapper) }
-    historical_unmerged_for_mapping = historical_unmerged_fastp.out[0]
-        .combine(mapper_ch)
-        .map { sample_id, r1, r2, mapper -> tuple(sample_id, r1, r2, mapper) }
-
-    // 2.Historical QC: FastQC on untrimmed merged/unmerged (optional)
-    if (params.run_historical_fastqc) {
-        QC_MERGED(historical_fastp.out.merged)
-        QC_UNMERGED(historical_unmerged_fastp.out[0])
-    }
-    
-    // 3.Historical mapper and read preparation for mapping
-    // (mapper selection combined with fastp-processed reads from step 1)
-    
-    // 3.Historical mapping: Separate merged/unmerged mapping per lane (no trim) with selected mapper
-    historical_bwa_merged = BWA_MERGED(historical_merged_for_mapping)
-    historical_bwa_unmerged = BWA_UNMERGED(historical_unmerged_for_mapping)
-
-    // 4.Historical duplicate removal: separate processes for merged/unmerged
-    historical_markdup_merged = MARKDUP_MERGED(historical_bwa_merged.out)
-    historical_markdup_unmerged = MARKDUP_UNMERGED(historical_bwa_unmerged.out)
-
-    // 5.Historical BAM merge: combine merged+unmerged per biological sample
-    historical_bams_to_merge = historical_markdup_merged.out
-        .mix(historical_markdup_unmerged.out)
-        .map { id, bam ->
-            def sample_name = id.split('_')[0]
-            return [ sample_name, bam ]
-        }
-        .groupTuple()
-    historical_merge_bams = MERGE_BAMS(historical_bams_to_merge)
-
-    // 6.Historical indel realignment and final BAM QC
-    historical_realn = INDEL_REALN(historical_merge_bams.out, ref_ch, ref_fai_ch, ref_dict_ch)
-    historical_indexed = INDEX_REALIGNED(historical_realn.out)
-    BAM_QC(historical_indexed.out)
-
-    // 7. Optional historical mapDamage: rescale and emit rescaled BAMs for downstream use
-    // (modern samples skip this step)
-    if (params.run_historical_mapdamage) {
-        historical_mapdamage = MAPDAMAGE(historical_indexed.out, ref_ch)
-        // 8. QC on rescaled BAMs to track coverage changes after mapDamage rescaling
-        // (modern samples skip this step; historical original BAMs still get QC in step 6.B)
-        BAM_QC(historical_mapdamage.out.rescaled_indexed)
+        return mapper
     }
 
-    // 9. Wire cleaned BAMs into ANGSD downstream modules
-    // Modern samples always use the final cleaned BAMs from realignment and indexing
-    modern_bams_for_angsd = modern_indexed.out
+    // 4. Fire off the pipelines
+    modern_pipeline = MODERN_PIPELINE(modern_samples_ch, historical_trim_length_ch, mapper_ch, ref_ch, ref_fai_ch, ref_dict_ch)
+    
+    // Note: We pass the pre-calculated FASTP output directly into the Historical Pipeline
+    historical_pipeline = HISTORICAL_PIPELINE(historical_fastp.merged, historical_fastp.unmerged, mapper_ch, ref_ch, ref_fai_ch, ref_dict_ch)
+
+    // 5. Wire cleaned BAMs into ANGSD downstream modules
+    modern_bams_for_angsd = modern_pipeline.indexed
         .map { sample_name, bam, bai -> tuple(sample_name, "modern", bam, bai) }
-    
-    // Historical samples use either original or rescaled BAMs depending on configuration
+
     if (params.run_historical_mapdamage && params.use_historical_rescaled) {
-        // Use rescaled BAMs when mapDamage is enabled and rescaled variant is requested
-        historical_bams_for_angsd = historical_mapdamage.out.rescaled_indexed
+        historical_bams_for_angsd = historical_pipeline.rescaled
             .map { sample_name, bam, bai -> tuple(sample_name, "historical_rescaled", bam, bai) }
     } else {
-        // Use original BAMs (either because mapDamage is off, or mapDamage is on but original variant requested)
-        historical_bams_for_angsd = historical_indexed.out
+        historical_bams_for_angsd = historical_pipeline.indexed
             .map { sample_name, bam, bai -> tuple(sample_name, "historical_original", bam, bai) }
     }
-    
-    // Combine modern and historical BAMs into single output channel for ANGSD
-    // Format: tuple(sample_name, bam_type, bam_file, bam_index)
-    // where bam_type is one of: "modern", "historical_original", "historical_rescaled"
-    // Downstream ANGSD modules can filter by sample class or use all samples together
-    bams_for_angsd = modern_bams_for_angsd.mix(historical_bams_for_angsd)
 
-    // Run AMBER (Prep -> Run) [currently commented out]
-    // AMBER_PREP(INDEX_REALIGNED.out)
-    // AMBER(AMBER_PREP.out)
+    bams_for_angsd = modern_bams_for_angsd.mix(historical_bams_for_angsd)
 }

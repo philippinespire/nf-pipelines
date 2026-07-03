@@ -12,3 +12,4 @@ dependencies:
   - openjdk=11
   - fontconfig
   - freetype
+  - angsd=0.940
