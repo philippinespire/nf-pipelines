@@ -10,13 +10,10 @@ in="$1"
 out="$2"
 trim_length="$3"
 
-reader="cat"
-[[ "$in" =~ \.gz$ ]] && reader="zcat"
-
-$reader "$in" | awk 'NR%4==1{
+$reader "$in" | awk -v trim="$trim_length" 'NR%4==1{
   header=$0; getline sequence; getline plus; getline quality;
   L=length(sequence);
-  if (L>="'"$trim_length"'") {
+  if (L >= trim) {
     m=int(L/2); if (m<1) m=1;
     # Split header: @ID rest_of_header
     # Append :1 and :2 to the ID portion
