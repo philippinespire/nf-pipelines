@@ -4,8 +4,8 @@ nextflow.enable.dsl=2
 params.samples_file = "${projectDir}/inputfiles/fastq_filenames.txt"
 params.indir        = "${projectDir}/data/symlinks"
 params.outdir       = "${projectDir}/results" 
-params.reference    = "${projectDir}/data/reference/<reference>.fasta"
-params.bed_file     = "${projectDir}/data/reference/<reference>.repma.bed"
+params.reference    = "${projectDir}/data/reference/GCF_902148845.1_fSalaFa1.1_chr1-23_rename.fna"
+params.bed_file     = "${projectDir}/data/reference/GCF_902148845.1_fSalaFa1.1_chr1-23_rename.repma.bed"
 params.split_script = "${projectDir}/scripts/split_reads.sh"
 params.rmdup_script = "${projectDir}/scripts/samremovedup.py"
 params.amber_script = "/home/mdehasqu/TOOLS/AMBER/AMBER" // Ignore this.
@@ -88,7 +88,11 @@ process QC_MERGED {
 
     script:
     """
-    fastqc -o . -t ${task.cpus} --extract ${merged_fq}
+    export JAVA_HOME="\$CONDA_PREFIX"
+    export PATH="\$CONDA_PREFIX/bin:\$PATH"
+    export LD_LIBRARY_PATH="\$CONDA_PREFIX/lib:\${LD_LIBRARY_PATH:-}"
+
+    fastqc -o . -t ${task.cpus} ${merged_fq}
     """
 }
 
@@ -146,8 +150,12 @@ process QC_UNMERGED {
 
     script:
     """
-    fastqc -o . -t ${task.cpus} --extract ${r1}
-    fastqc -o . -t ${task.cpus} --extract ${r2}
+    export JAVA_HOME="\$CONDA_PREFIX"
+    export PATH="\$CONDA_PREFIX/bin:\$PATH"
+    export LD_LIBRARY_PATH="\$CONDA_PREFIX/lib:\${LD_LIBRARY_PATH:-}"
+
+    fastqc -o . -t ${task.cpus} ${r1}
+    fastqc -o . -t ${task.cpus} ${r2}
     """
 }
 
@@ -382,8 +390,9 @@ workflow {
     // 6. Indel Realign & QC
     ref_ch      = Channel.fromPath(params.reference).first()
     ref_fai_ch  = Channel.fromPath("${params.reference}.fai").first()
-    ref_dict_ch = Channel.fromPath(params.reference.replaceAll(/\.fasta$/, '.dict')).first()
-
+    def ref_dict = params.reference.replaceFirst(/(?i)\.(fa|fna|fasta)$/, '.dict')
+    ref_dict_ch = Channel.fromPath(ref_dict, checkIfExists: true).first()
+    
     INDEL_REALN(MERGE_BAMS.out, ref_ch, ref_fai_ch, ref_dict_ch)
     INDEX_REALIGNED(INDEL_REALN.out)
     
@@ -391,6 +400,6 @@ workflow {
     BAM_QC(INDEX_REALIGNED.out)
 
     // Run AMBER (Prep -> Run)
-    // AMBER_PREP(INDEX_REALIGNED.out)
-    // AMBER(AMBER_PREP.out)
+    AMBER_PREP(INDEX_REALIGNED.out)
+    AMBER(AMBER_PREP.out)
 }

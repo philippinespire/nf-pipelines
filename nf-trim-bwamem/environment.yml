@@ -12,3 +12,7 @@ dependencies:
   - openjdk=11
   - fontconfig
   - freetype
+  - python=3.9 
+  - pysam
+  - matplotlib
+  - numpy
