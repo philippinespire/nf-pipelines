@@ -4,9 +4,12 @@ process BWA_MERGED {
 
     input:
     tuple val(sample_id), path(merged_fq), val(mapper)
+    val bam_q
+    val trimlength
+    path reference_bundle // a bundle of reference files, including the fasta and index files. fasta is first.
 
     output:
-    tuple val(sample_id), path("${sample_id}_trimmed_merged.L${params.trimlength}.sorted.bam")
+    tuple val(sample_id), path("${sample_id}_trimmed_merged.L${trimlength}.sorted.bam")
 
     script:
     def fields = sample_id.split('_')
@@ -16,19 +19,19 @@ process BWA_MERGED {
     
     if (mapper == "aln") {
         """
-        bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${params.reference} ${merged_fq} > ${sample_id}.sai
+        bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${reference_bundle[0]} ${merged_fq} > ${sample_id}.sai
         
         bwa samse -r "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
-            ${params.reference} ${sample_id}.sai ${merged_fq} \
-            | samtools view -q${params.bam_q} -F 4 -@ ${task.cpus} -bSh - \
-            | samtools sort -m 4G -o ${sample_id}_trimmed_merged.L${params.trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
+            ${reference_bundle[0]} ${sample_id}.sai ${merged_fq} \
+            | samtools view -q${bam_q} -F 4 -@ ${task.cpus} -bSh - \
+            | samtools sort -m 4G -o ${sample_id}_trimmed_merged.L${trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
         """
     } else {
         """
         bwa mem -R "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
-            -t ${task.cpus} ${params.reference} ${merged_fq} \
-            | samtools view -q${params.bam_q} -F 4 -@ ${task.cpus} -bSh - \
-            | samtools sort -m 4G -o ${sample_id}_trimmed_merged.L${params.trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
+            -t ${task.cpus} ${reference_bundle[0]} ${merged_fq} \
+            | samtools view -q${bam_q} -F 4 -@ ${task.cpus} -bSh - \
+            | samtools sort -m 4G -o ${sample_id}_trimmed_merged.L${trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
         """
     }
 }
@@ -39,9 +42,12 @@ process BWA_UNMERGED {
 
     input:
     tuple val(sample_id), path(r1), path(r2), val(mapper)
+    val bam_q
+    val trimlength
+    path reference_bundle // a bundle of reference files, including the fasta and index files. fasta is first.
 
     output:
-    tuple val(sample_id), path("${sample_id}.L${params.trimlength}.sorted.bam")
+    tuple val(sample_id), path("${sample_id}.L${trimlength}.sorted.bam")
 
     script:
     def fields = sample_id.split('_')
@@ -51,21 +57,21 @@ process BWA_UNMERGED {
 
     if (mapper == "aln") {
         """
-        bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${params.reference} ${r1} > ${sample_id}_R1.sai
-        bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${params.reference} ${r2} > ${sample_id}_R2.sai
+        bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${reference_bundle[0]} ${r1} > ${sample_id}_R1.sai
+        bwa aln -l 16500 -n 0.01 -o 2  -t ${task.cpus} ${reference_bundle[0]} ${r2} > ${sample_id}_R2.sai
 
         bwa sampe \
             -r "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
-            ${params.reference} ${sample_id}_R1.sai ${sample_id}_R2.sai ${r1} ${r2} \
-            | samtools view -q${params.bam_q} -F 4 -@ ${task.cpus} -bSh - \
-            | samtools sort -m 4G -o ${sample_id}.L${params.trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
+            ${reference_bundle[0]} ${sample_id}_R1.sai ${sample_id}_R2.sai ${r1} ${r2} \
+            | samtools view -q${bam_q} -F 4 -@ ${task.cpus} -bSh - \
+            | samtools sort -m 4G -o ${sample_id}.L${trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
         """
     } else {
         """
         bwa mem -R "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
-            -t ${task.cpus} ${params.reference} ${r1} ${r2} \
-            | samtools view -q${params.bam_q} -F 4 -@ ${task.cpus} -bSh - \
-            | samtools sort -m 4G -o ${sample_id}.L${params.trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
+            -t ${task.cpus} ${reference_bundle[0]} ${r1} ${r2} \
+            | samtools view -q${bam_q} -F 4 -@ ${task.cpus} -bSh - \
+            | samtools sort -m 4G -o ${sample_id}.L${trimlength}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
         """
     }
 }

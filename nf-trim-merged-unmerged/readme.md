@@ -22,6 +22,7 @@ This GitHub repository also contains the `nf-mapping-ancient-merged` and `nf-ang
 **Important for WAHAB HPC** For nextflow to correctly install conda environments, a personal conda installation is necessary. Installation instruction for miniconda (my personal favorite) and how to use it can be found [here](https://www.anaconda.com/docs/getting-started/miniconda/main)
 
 ## Folder structure
+Before running, this is the setup:
 ```
 nf-trim-merged-unmerged/  
 ├── data/  
@@ -157,6 +158,23 @@ nextflow run main.nf -profile standard -resume
 
 If everything went well, the pipeline will run and submit jobs to the queue. 
 On the first run, a new conda environment will be created. This can take some time.
+
+## Output
+Results are organized as
+```
+results
+├── data
+|   ├── bam         # Merged and realigned bam and bam index files
+|   ├── fastq       # Trimmed historical reads (R1 and R2), and trimmed (R1 and R2) and trimmed+merged modern reads
+|   ├── mapdamage   # Mapdamage output plots, txt files, logs, and rescaled historical bam files
+|   └── reference   # Repeat-masking files: .combined_mask.bed, .cleaned.regions, .chr, .regions, repma.angsd.txt/bin/idx (angsd sites files)
+|       └── modeler # Output from RepeatModeler
+├── fastp           # fastp output
+├── fastqc          # fastqc output
+├── stats           # historical_trimlength.txt (calculated ave historical read length)
+├── amber           # amber output
+└── depth           # Average sequencing depth for the regions in the BED file, per sample
+
 
 ## Software Stack
 The pipeline uses:
