@@ -10,9 +10,12 @@ in="$1"
 out="$2"
 trim_length="$3"
 
+<<<<<<< HEAD
 reader="cat"
 [[ "$in" =~ \.gz$ ]] && reader="zcat"
 
+=======
+>>>>>>> c7471df29089e70474405b87f963f62d776d18ec
 $reader "$in" | awk -v trim="$trim_length" 'NR%4==1{
   header=$0; getline sequence; getline plus; getline quality;
   L=length(sequence);
