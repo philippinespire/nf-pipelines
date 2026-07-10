@@ -120,15 +120,15 @@ Note that running repeat masking is a fairly slow process (a few hours).
 Other parameters that you are less likely to adjust can be found in the header of `main.nf`.
 
 ## Pipeline Features
-1. Dual-Input Metadata Ingestion: The configuration ingests sample information from one of two channels:
+1. Two metadata options: The configuration ingests sample information from one of two channels:
    1. Samplesheet (Preferred): Parses a comma-separated file (`inputfiles/samplesheet.csv`) containing sample identifiers and era tags (modern vs historical).
    2. Legacy Mode (Fallback): Scans a single-column flat file (`inputfiles/fastq_filenames.txt`) and sends all targets to the modern processing track.
-2. Two-Pass Historical Mapping
-   1. First-Pass Mapping: Historical segments are cleaned via fastp and aligned using a baseline algorithm specified by the user (Default: `bwa aln`).
-   2. Mapped Length Calculation: High-confidence alignments are used to calculate average read length.
-   3. Mapper Choice: If the calculated true mapped length is $\le$ 80 bp, the pipeline sets `bwa aln` (optimal for short, degraded molecules). If the calculated true mapped length is > 80 bp, the pipeline upgrades to `bwa mem`.
-   4. Second-Pass Mapping: A second mapping pass is executed only if the calculated optimal mapper selection differs from the baseline parameter. 
-3. Modern Trimming: Long modern reads are split down the middle or truncated to match the structural length profiles of the historical set, preventing false length-bias signatures in downstream population genetic matrices.
+2. Two-pass historical mapping
+   1. First-pass mapping: Historical segments are cleaned via fastp and aligned using a baseline algorithm specified by the user (Default: `bwa aln`).
+   2. Mapped length calculation: High-quality alignments are used to calculate average read length.
+   3. Mapper choice: If the calculated read length is $\le$ 80 bp, the pipeline sets `bwa aln` (optimal for short, degraded molecules). If the calculated true mapped length is > 80 bp, the pipeline upgrades to `bwa mem`.
+   4. Second-pass mapping: A second mapping pass is executed only if the chosen mapper differs from the first pass. 
+3. Modern trimming: Long modern reads are split down the middle or truncated to match the average length of the historical set, reducing length-bias signatures in downstream analyses.
 
 
 ## To Run
@@ -182,7 +182,7 @@ results
 ├── fastqc           # fastqc output
 ├── mapdamage        # Mapdamage output plots and txt files
 └── stats            # historical_trimlength.txt (calculated ave historical read length)
-
+```
 
 ## Software Stack
 The pipeline uses:
