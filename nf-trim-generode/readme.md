@@ -111,10 +111,10 @@ params.bed_file     = "${projectDir}/data/reference/<reference>.repma.bed" // in
 mm10). This file is used for filtering reads during mapping and for calculating depth statistics.
 params.historical_mapper        = "aln" // Default starting point for historical read mapping
 params.run_repeatmasking        = true // Whether to run RepeatModeler and RepeatMasker on the reference genome (true/false). If false, it needs an input bed file of repeats and CpG sites for downstream ANGSD analyses.
-params.run_historical_fastqc    = true
-params.run_historical_mapdamage = true
-params.run_historical_amber     = true
-params.run_modern_amber         = true
+params.run_historical_fastqc    = true // Whether to run fastqc (quality assessment) on the historical reads after fastp quality trimming
+params.run_historical_mapdamage = true // Whether to run mapdamage assessment and bam rescaling on the historical reads
+params.run_historical_amber     = true // Whether to run amber quality assessment on the mapped historical reads
+params.run_modern_amber         = true // Whether to run amber quality assessment on the mapped modern reads
 ```
 Note that running repeat masking is a fairly slow process (a few hours).
 
