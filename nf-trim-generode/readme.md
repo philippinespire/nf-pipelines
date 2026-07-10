@@ -50,18 +50,22 @@ The pipeline requires the following inputfiles:
 * Reference (fasta or fna format)
 * Reference index files (.bwt, .ann, .sa, .pac, .ann, .amb )
 * BED file with masked repeat regions
-* File with the name and era of all fastq files to be processed (`inputfiles/samplesheet.csv`)
+* CSV file with columns sample and era with the sample name and era (historical or modern) of all fastq files to be processed (`inputfiles/samplesheet.csv`). See [samplesheet_example.csv](examples/samplesheet_example.csv).
 * Directory containing all fastq files
 
-All inputfiles can be copied or generated from the GenErode directory. Below is code that can help to generate the inputfiles.
+The pipeline assumes that fastq files are named in the following way: 
+`<sampleID>_<index>_<flowcellID>_R1.fastq.gz` eg. `TzoCMta031_1_22CVWFLT3_R1.fastq.gz`  
+and the paired `_R2.fastq.gz` file.  
+Make sure that all fastq file names are unique and follow this structure. Otherwise the pipeline will fail.
+
+Below is code that can help to generate the inputfiles.
 
 ```bash
-# Activate bash shell
-
+# Activate bash shell. 
 bash
 
 # Change directory to the nextflow pipeline
-cd ./nf-trim-merged-unmerged
+cd ./nf-trim-generode
 
 # Create new directories
 mkdir data
@@ -70,29 +74,27 @@ mkdir ./data/symlinks
 mkdir inputfiles
 
 # Create softlinks to the raw fastq files
-ln -s /Generode/data/raw_reads_symlinks/modern/*fastq.gz ./data/symlinks
+ln -s /path/to/raw_reads/*fastq.gz ./data/symlinks
 
-# Create fastq filenames file. Manually adjust the file if necessary (e.g. if not all samples from GenErode are to be used)
-ls ./data/symlinks/*fastq.gz | xargs -n1 basename | cut -d "_" -f1,2,3 | uniq > ./inputfiles/fastq_filenames.txt
+# Create samplesheet metadata file from the fastq files.
+# Uses <sampleID>_<index>_<flowcellID> as the sample_id in the nextflow pipeline
+# This assumes that the sample name in the fastq files have an A (Albatross) or C (contemporary) in the 4th position, e.g., TzoAMta031_1_22CVWFLT3 and TzoCMta031_1_22CVWFLT3
+# Manually adjust the file if necessary (e.g. if not all samples are to be used)
+(echo "sample,era"; ls ./data/symlinks/*fastq.gz | xargs -n1 basename | cut -d "_" -f1,2,3 | uniq | awk '{
+    type = substr($0, 4, 1)
+    if (type == "A") 
+        print $0 ",historical"
+    else if (type == "C") 
+        print $0 ",modern"
+    else 
+        print $0 ",modern"
+}') > ./inputfiles/samplesheet.csv
 
 # Create softlinks to reference and repma bed file
 # Adjust the path to the reference if necessary
-ln -s /Generode/reference/<reference>.fasta ./data/reference/
-ln -s /Generode/reference/<reference>.fasta.* ./data/reference/
-ln -s /Generode/reference/<reference>.repma.bed ./data/reference/
-
-```
-
-**Important** The pipeline assumes that fastq files are named in the following way: 
-`<sampleID>_<index>_<flowcellID>_R1.fastq.gz` eg. `TzoCMta031_1_22CVWFLT3_R1.fastq.gz`
-Make sure that all fastq file names are unique and follow this structure. Otherwise the pipeline will fail.
-
-### Sample CSV Structure Example 
-This could be, for example, `inputfiles/samplesheet.csv`
-```
-sample,era
-TzoCMta031_1_22CVWFLT3,historical
-CviAPal001_Ex1_L4,modern
+ln -s /path/to/reference/<reference>.fasta ./data/reference/
+ln -s /path/to/reference/<reference>.fasta.* ./data/reference/
+ln -s /path/to/reference/<reference>.repma.bed ./data/reference/
 ```
 
 ### Configuration
@@ -109,11 +111,10 @@ params.bed_file     = "${projectDir}/data/reference/<reference>.repma.bed" // in
 mm10). This file is used for filtering reads during mapping and for calculating depth statistics.
 params.historical_mapper        = "aln" // Default starting point for historical read mapping
 params.run_repeatmasking        = true // Whether to run RepeatModeler and RepeatMasker on the reference genome (true/false). If false, it needs an input bed file of repeats and CpG sites for downstream ANGSD analyses.
-params.run_historical_fastqc    = false
-params.run_historical_mapdamage = false
-params.use_historical_rescaled  = false
-params.run_historical_amber     = false
-params.run_modern_amber         = false
+params.run_historical_fastqc    = true
+params.run_historical_mapdamage = true
+params.run_historical_amber     = true
+params.run_modern_amber         = true
 ```
 Note that running repeat masking is a fairly slow process (a few hours).
 
