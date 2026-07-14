@@ -49,7 +49,6 @@ The pipeline requires the following inputfiles:
 
 * Reference (fasta or fna format)
 * Reference index files (.bwt, .ann, .sa, .pac, .ann, .amb )
-* BED file with masked repeat regions
 * CSV file with columns sample and era with the sample name and era (historical or modern) of all fastq files to be processed (`inputfiles/samplesheet.csv`). See [samplesheet_example.csv](examples/samplesheet_example.csv).
 * Directory containing all fastq files
 
@@ -90,11 +89,10 @@ ln -s /path/to/raw_reads/*fastq.gz ./data/symlinks
         print $0 ",modern"
 }') > ./inputfiles/samplesheet.csv
 
-# Create softlinks to reference and repma bed file
+# Create softlinks to the genomic reference files:
 # Adjust the path to the reference if necessary
 ln -s /path/to/reference/<reference>.fasta ./data/reference/
 ln -s /path/to/reference/<reference>.fasta.* ./data/reference/
-ln -s /path/to/reference/<reference>.repma.bed ./data/reference/
 ```
 
 ### Configuration
@@ -107,7 +105,6 @@ params.samplesheet = "${projectDir}/inputfiles/samplesheet.csv" // This is the p
 params.indir        = "${projectDir}/data/symlinks" // This is the directory where the raw FASTQ files are expected to be located. The pipeline will look for files named <sample_id>_R1.fastq.gz and <sample_id>_R2.fastq.gz in this directory.
 params.outdir       = "${projectDir}/results" // This is the directory where all output files will be written. The pipeline will create subdirectories for different types of output (e.g., fastq, bam, stats).
 params.reference    = "${projectDir}/data/reference/<reference>.fasta" // This is the path to the reference genome FASTA file that will be used for read mapping. The <reference> placeholder should be replaced with the actual reference name (e.g., hg19, mm10).
-params.bed_file     = "${projectDir}/data/reference/<reference>.repma.bed" // input bed file of repeats and CpG sites for downstream ANGSD analyses. Only used if params.run_repeatmasking is set to false.
 mm10). This file is used for filtering reads during mapping and for calculating depth statistics.
 params.historical_mapper        = "aln" // Default starting point for historical read mapping
 params.run_repeatmasking        = true // Whether to run RepeatModeler and RepeatMasker on the reference genome (true/false). If false, it needs an input bed file of repeats and CpG sites for downstream ANGSD analyses.
@@ -116,7 +113,7 @@ params.run_historical_mapdamage = true // Whether to run mapdamage assessment an
 params.run_historical_amber     = true // Whether to run amber quality assessment on the mapped historical reads
 params.run_modern_amber         = true // Whether to run amber quality assessment on the mapped modern reads
 ```
-Note that running repeat masking is a fairly slow process (a few hours).
+Note that running repeat masking is a fairly slow process (a few hours). If you don't run it, however, you will need to specify a BED file (see the header in the `main.nf` file for details).
 
 Other parameters that you are less likely to adjust can be found in the header of `main.nf`.
 
