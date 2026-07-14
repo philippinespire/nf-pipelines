@@ -297,7 +297,7 @@ process CALC_HISTORICAL_TRIMLEN_BAM {
     """
     # Loop through all BAMs and stream the mapped reads into a single awk process
     for bam in ${bams}; do
-        samtools view -F 2308 "\$bam"
+        samtools view -F 2308 -q 25 "\$bam"
     done | awk '
       BEGIN { bases=0; reads=0 }
       {
