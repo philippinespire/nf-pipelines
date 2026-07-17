@@ -1,6 +1,6 @@
 ## Overview
 
-This pipeline calculates diversity estimates within the ANGSD frameowork. It is written in Nextflow DSL2 and designed to be run on Old Dominion WAHAB cluster. The pipeline starts from BAM files.
+This pipeline calculates diversity estimates within the ANGSD frameowork, makes a PCA, and makes an admixture plot. It is written in Nextflow DSL2 and designed to be run on Old Dominion WAHAB cluster. The pipeline starts from BAM files.
 
 **Important for WAHAB HPC:** For nextflow to correctly install conda environments, a personal conda installation is necessary. Installation instruction for miniconda (my personal favorite) and how to use it can be found [here](https://www.anaconda.com/docs/getting-started/miniconda/main)
 
@@ -22,7 +22,7 @@ This GitHub repository also contains the `nf-mapping-ancient-merged` and `nf-tri
 The pipeline requires the following inputfiles:
 
 * Reference (fasta or fna format)
-* BED file with masked repeat regions
+* BED file with masked repeat regions (eg, output by Generode or by nf-trim-generode)
 * BAM files
 
 In addition, we need to create the following files too (see instructions below):
@@ -48,6 +48,9 @@ Important:
 * `region` is used to define which historic and modern sites should be directly compared. Use the same value here if you want to directly compare two sites.
 * `pop` is used to define the populations for which to calculate diversity matrixes
 
+If you want to use mapdamage-rescaled BAM files for historical samples (eg, from Generode or nf-trim-generode), point to those files in this input file.
+
+
 ### ANGSD sites file
 The ANGSD sites file contains information on the sites that will be analyzed. We will use this file to remove repeat regions from the analysis. This files corresponds to the `-sites` flag in [ANGSD](https://www.popgen.dk/angsd/index.php/Sites).
 
@@ -59,21 +62,28 @@ awk '{print $1"\t"$2+1"\t"$3}' ./path/to/reference/reference.repma.bed > ./path/
 angsd sites index ./path/to/reference/reference.repma.angsd.txt
 ```
 
+Alternatively, this file is created as part of the nf-trim-generode pipeline and output in `results/data/reference/*.repma.angsd.txt`.
+
 ### Bam inputfile
 The filelist is a file containing the full path for each bam file with one filename per row.
 
 This corresponds to the input given with the `-bam` flag in [ANGSD](https://www.popgen.dk/angsd/index.php/Input).
+
+If you want to use mapdamage-rescaled BAM files for historical samples (eg, from Generode or nf-trim-generode), point to those files in this input file.
 
 ### Contig file
 Specify the contigs/regions for which to run the pipeline. One contig/region per line. This corresponds to the `-r` flag in [ANGSD](https://www.popgen.dk/angsd/index.php/Input). The pipeline will submit a job per contig/region.
 
 ## Configuration
 
-In the `main.nf` file, adjust the parameters. Make sure all files are in the correct directory.
+In the `main.nf` file, adjust the file paths. Make sure all files are in the correct directory.
 
 In addition, the following parameters should be defined:
 * maxdepth: I use 10X the expected total coverage here. The expected coverage can be calculated for the `dpstats.txt` files
 * minind: I use 70-80% number of total individuals here, though this also depends on the dataset.
+* ld_prune: Set to true if you want to prune out loci in linkage disequilibrium (often a good idea). The PCA, admixture, and diversity calculations will then use the LD-pruned set of loci.
+* max_kd_dist: LD pruning uses a sliding window to test for disequilibrium. This sets the window width. 50 kb is usually good. Narrower will run faster, wider will run more slowly.
+* min_weight: Loci that are correlated (r2) more than this threshold will be trimmed out. 0.2 is often a good value.
 
 ```bash
 // Default Parameters
@@ -85,6 +95,9 @@ params.bed_file    = "${projectDir}/data/reference/reference.repma.angsd.txt"
 params.species     = "Sor"
 params.maxdepth    = 1000
 params.minind      = 20
+params.ld_prune    = false  // Set to true to enable LD pruning
+params.max_kb_dist = 50     // Maximum pairwise distance in kb to test for LD if pruning
+params.min_weight  = 0.2    // Minimum r2 threshold for pruning filter
 
 ```
 
