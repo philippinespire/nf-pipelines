@@ -17,15 +17,15 @@ params.reference_prefix         = params.reference.tokenize('/').last().replaceA
 params.historical_era           = "historical"
 params.historical_mapper        = "aln" // Default starting point for historical read mapping ("aln" or "mem")
 params.run_repeatmasking        = true // Whether to run RepeatModeler and RepeatMasker on the reference genome (true/false). If false, it needs an input bed file of repeats and CpG sites for downstream ANGSD analyses.
-params.run_historical_fastqc    = false // Whether to run fastqc (quality assessment) on the historical reads 
-params.run_historical_mapdamage = false // Whether to run mapdamage assessment and bam rescaling on the historical reads
-params.run_historical_amber     = false // Whether to run amber quality assessment on the mapped historical reads
-params.run_modern_amber         = false // Whether to run amber quality assessment on the mapped modern reads
+params.run_historical_fastqc    = true // Whether to run fastqc (quality assessment) on the historical reads 
+params.run_historical_mapdamage = true // Whether to run mapdamage assessment and bam rescaling on the historical reads
+params.run_historical_amber     = true // Whether to run amber quality assessment on the mapped historical reads
+params.run_modern_amber         = true // Whether to run amber quality assessment on the mapped modern reads
 params.split_script = "${projectDir}/scripts/split_reads.sh"
 params.rmdup_script = "${projectDir}/scripts/samremovedup.py"
 params.amber_script = "/archive/carpenterlab/pire/softwares/AMBERv2/AMBER" 
 params.bwa_threads  = 4
-params.bam_q        = 1 // Mapping quality threshold. 
+params.bam_q        = 25 // Mapping quality threshold. 
 params.trimlength   = 85 // Default fallback trim length if no historical reads map successfully
 
 def resolve_reads = { String sample_id ->
@@ -100,6 +100,56 @@ process REPEAT_MODELER {
     """
 }
 
+process EXTRACT_CPG {
+    tag "Extracting CpG sites from ${ref_fasta.baseName}"
+    label 'process_low'
+    module 'container_env:python3'
+    publishDir "${params.outdir}/data/reference", mode: 'copy'
+
+    input:
+    path ref_fasta
+
+    output:
+    path "cpg_sites.bed", emit: cpg_bed
+
+    script:
+    """
+    crun python3 -c '
+    import sys
+
+    ref_fasta = "${ref_fasta}"
+    out_bed = "cpg_sites.bed"
+
+    with open(ref_fasta, "r") as f_in, open(out_bed, "w") as f_out:
+        chr_name = ""
+        seq = []
+
+        def process_seq(header, sequence):
+            full_seq = "".join(sequence).upper()
+            pos = 0
+            while True:
+                pos = full_seq.find("CG", pos)
+                if pos == -1:
+                    break
+                f_out.write(f"{header}\\t{pos}\\t{pos+2}\\n")
+                pos += 1
+
+        for line in f_in:
+            line = line.strip()
+            if line.startswith(">"):
+                if chr_name:
+                    process_seq(chr_name, seq)
+                chr_name = line.split()[0][1:]
+                seq = []
+            else:
+                seq.append(line)
+
+        if chr_name:
+            process_seq(chr_name, seq)
+    '
+    """
+}
+
 process REPEAT_MASKER {
     tag "Masking ${ref_fasta.baseName}"
     label 'process_medium'
@@ -108,7 +158,8 @@ process REPEAT_MASKER {
     input:
     path ref_fasta
     path repeat_library // This accepts the 'consensi.fa' file from REPEAT_MODELER
-    
+    path cpg_bed
+  
     output:
     path "${ref_fasta.baseName}.combined_mask.bed", emit: mask_bed
     path "${ref_fasta.baseName}.cleaned.regions",     emit: regions
@@ -131,19 +182,8 @@ process REPEAT_MASKER {
         touch repeats.bed
     fi
 
-    # Step C: Extract custom hyper-mutable CpG tracks on the fly
-    awk '/^>/ {chr=substr(\$1,2); pos=0; next} \
-         { \
-           line=toupper(\$0); \
-           for(i=1; i<length(line); i++) { \
-             if(substr(line,i,2)=="CG") print chr"\\t"(pos+i-1)"\\t"(pos+i+1); \
-           } \
-           pos+=length(\$0); \
-         }' ${ref_fasta} > cpg_sites.bed
-
-    # Step D: Synthesize tracks using bedtools (if bedtools is inside your repeatmasker container)
-    # If bedtools is missing in your container, use a standard awk implementation to merge/sort.
-    cat repeats.bed cpg_sites.bed | sort -k1,1 -k2,2n > combined_sorted.bed
+    # Step C: Combine repeats BED with Python-generated CpG BED
+    cat repeats.bed ${cpg_bed} | sort -k1,1 -k2,2n > combined_sorted.bed
     
     # Fast native custom merge line replacing 'bedtools merge' to avoid container dependency errors
     awk 'OFS="\\t" { \
@@ -296,6 +336,7 @@ process CALC_HISTORICAL_TRIMLEN_BAM {
     script:
     """
     # Loop through all BAMs and stream the mapped reads into a single awk process
+    # only used primary mapped reads (-F flag) and high mapping quality (-q 25)
     for bam in ${bams}; do
         samtools view -F 2308 -q 25 "\$bam"
     done | awk '
@@ -650,7 +691,8 @@ workflow {
     if (params.run_repeatmasking) {
         // repeat modeling, masking, and CpG site extraction
         modeler_output = REPEAT_MODELER(fasta_ref_ch) // resource-intensive step, may require high RAM and CPU
-        masking_output = REPEAT_MASKER(fasta_ref_ch, modeler_output.model_library)
+        cpg_output     = EXTRACT_CPG(fasta_ref_ch)        
+        masking_output = REPEAT_MASKER(fasta_ref_ch, modeler_output.model_library, cpg_output.cpg_bed)
         bed_ch = masking_output.mask_bed 
         regions_ch  = masking_output.regions // not used?
     } else {
