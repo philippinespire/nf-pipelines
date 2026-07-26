@@ -498,7 +498,7 @@ process MAPDAMAGE {
     def input_prefix = bam.name.replaceAll(/\.bam$/, '')
     """
     # Run mapDamage for damage assessment and rescaling    
-    crun mapDamage -i ${bam} -r ${ref_bundle[0]} -d mapd_output --rescale --merge-reference-sequences
+    crun mapDamage -i ${bam} -r ${ref_bundle[0]} -d mapd_output --rescale --merge-reference-sequences --length 150
 
     # Copy rescaled BAM to standard output name and index it
     if [ -f "mapd_output/${input_prefix}.rescaled.bam" ]; then
