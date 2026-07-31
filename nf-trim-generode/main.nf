@@ -74,6 +74,7 @@ historical_samples_ch = sample_metadata_ch
 process REPEAT_MODELER {
     tag "De novo repeat discovery on ${ref_fasta.baseName}"
     label 'process_high' // Modeler usually requires significantly more RAM/CPU
+    scratch true // run in node-local scratch, stage outputs back
     publishDir "${params.outdir}/data/reference/modeler", mode: 'copy'
 
     input:
@@ -199,10 +200,12 @@ process REPEAT_MASKER {
 
 process PREP_REFERENCE_REPEAT {
     publishDir "${params.outdir}/data/reference", mode: 'copy'
+    module 'angsd/0.940'
 
     input:
-    path ref
-    path repeat_bed
+    path ref           // Expects the reference FASTA
+    path ref_fai       // Expects reference.fasta.fai
+    path repeat_bed    // Expects the combined repeat/CpG bed
 
     output:
     path "${params.reference_prefix}.repma.angsd.txt", emit: sites
@@ -213,8 +216,38 @@ process PREP_REFERENCE_REPEAT {
 
     script:
     """
-    awk '{print \$1"\\t"\$2+1"\\t"\$3}' ${repeat_bed} > ${params.reference_prefix}.repma.angsd.txt
+    # 1. Generate full genome BED file from the .fai index (chr, 0, length)
+    awk 'OFS="\\t" {print \$1, 0, \$2}' ${ref_fai} | sort -k1,1 -k2,2n > full_genome.bed
+
+    # 2. Sort the repeat mask BED just in case
+    sort -k1,1 -k2,2n ${repeat_bed} > sorted_mask.bed
+
+    # 3. Perform BED subtraction (full_genome MINUS mask) to create an inclusion BED
+    #    This yields all clean, non-repeat, non-CpG regions.
+    awk '
+    BEGIN { OFS="\\t" }
+    NR==FNR {
+        # Store mask regions in memory per chromosome
+        m_chr[\$1]++; m_start[\$1, m_chr[\$1]]=\$2; m_end[\$1, m_chr[\$1]]=\$3; next
+    }
+    {
+        c=\$1; g_start=\$2; g_end=\$3; cur=g_start
+        count=m_chr[c]
+        for (i=1; i<=count; i++) {
+            s=m_start[c, i]; e=m_end[c, i]
+            if (e <= cur) continue
+            if (s >= g_end) break
+            if (s > cur) print c, cur, s
+            if (e > cur) cur = e
+        }
+        if (cur < g_end) print c, cur, g_end
+    }' sorted_mask.bed full_genome.bed > inclusion_sites.bed
+
+    # 4. Format inclusion BED into 1-based ANGSD sites file and index it
+    awk '{print \$1"\\t"\$2+1"\\t"\$3}' inclusion_sites.bed > ${params.reference_prefix}.repma.angsd.txt
     angsd sites index ${params.reference_prefix}.repma.angsd.txt
+
+    # 5. Generate region tracking files
     cut -f1 ${params.reference_prefix}.repma.angsd.txt | awk '!seen[\$0]++' | awk '{print \$0 ":"}' > ${params.reference_prefix}.regions
     cut -f1 ${params.reference_prefix}.repma.angsd.txt | sort | uniq > ${params.reference_prefix}.chrs
     """
@@ -706,7 +739,7 @@ workflow {
         bed_ch = Channel.fromPath(params.bed_file, checkIfExists: true).first()
     }
     // then prepare the reference for downstream ANGSD analyses
-    PREP_REFERENCE_REPEAT(fasta_ref_ch, bed_ch)
+    PREP_REFERENCE_REPEAT(fasta_ref_ch, ref_fai_ch, bed_ch)
 
     // 2. FASTP on Historical Reads
     historical_fastp_input = historical_samples_ch.map { id, r1, r2 -> tuple(id, [r1, r2]) }    
@@ -771,6 +804,7 @@ workflow {
         .mix(hist_bwa_unmerged_pass2)
     
     // 7. Sub-pipelines execution to produce indexed bams and optional rescaled bams for historical samples
+    PREP_REFERENCE_REPEAT(fasta_ref_ch, ref_fai_ch, bed_ch)
     modern_pipeline = MODERN_PIPELINE(modern_samples_ch, trim_length_ch, mapper_ch, ref_bundle_ch, bed_ch)
     historical_pipeline = HISTORICAL_PIPELINE(final_hist_bwa_merged, final_hist_bwa_unmerged, ref_bundle_ch, trim_length_ch, bed_ch)
 }
