@@ -369,9 +369,9 @@ process CALC_HISTORICAL_TRIMLEN_BAM {
     script:
     """
     # Loop through all BAMs and stream the mapped reads into a single awk process
-    # only used primary mapped reads (-F flag) and high mapping quality (-q 25)
+    # only used primary mapped reads (-F flag) and high mapping quality (chosen by params.bam_q)
     for bam in ${bams}; do
-        samtools view -F 2308 -q 25 "\$bam"
+        samtools view -F 2308 -q ${params.bam_q} "\$bam"
     done | awk '
       BEGIN { bases=0; reads=0 }
       {
@@ -804,7 +804,6 @@ workflow {
         .mix(hist_bwa_unmerged_pass2)
     
     // 7. Sub-pipelines execution to produce indexed bams and optional rescaled bams for historical samples
-    PREP_REFERENCE_REPEAT(fasta_ref_ch, ref_fai_ch, bed_ch)
     modern_pipeline = MODERN_PIPELINE(modern_samples_ch, trim_length_ch, mapper_ch, ref_bundle_ch, bed_ch)
     historical_pipeline = HISTORICAL_PIPELINE(final_hist_bwa_merged, final_hist_bwa_unmerged, ref_bundle_ch, trim_length_ch, bed_ch)
 }
