@@ -2,7 +2,7 @@
 
 This pipeline runs (optional) chi-squared selection scans from data across two time-points, does (optional) ld-pruning, calculates diversity estimates within the ANGSD framework on all putatively neutral sites (including monomorphic sites), and then makes PCA and admixture plots and calculates Fst with ANGSD on putatively neutral ld-pruned sites. It only considers sites that meet minimum individual and maximum depth limits in each of the population-eras (set as a fraction and a multiplier, respectively).
 
-It is written in Nextflow DSL2 and designed to be run on Old Dominion WAHAB cluster (use `-profile wahab`). The pipeline starts from BAM files, such as those output by nf-trim-generode. It was developed from nf-angsd-diversity.
+It is written in Nextflow DSL2 and designed to be run on Old Dominion WAHAB cluster (use `-profile wahab`). The pipeline starts from BAM files, such as those output by nf-trim-generode. It was developed from nf-angsd-diversity by Malin Pinsky (August 2026) with plenty of help from Gemini.
 
 **Important for WAHAB HPC:** For nextflow to correctly install conda environments, a personal conda installation is necessary. Installation instruction for miniconda (my personal favorite) and how to use it can be found [here](https://www.anaconda.com/docs/getting-started/miniconda/main)
 
@@ -145,7 +145,7 @@ module load nextflow
 bash
 
 # Start the run
-nextflow run main.nf -profile standard -resume
+nextflow run main.nf -profile wahab -resume
 
 ```
 
