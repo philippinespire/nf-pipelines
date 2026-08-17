@@ -13,24 +13,25 @@ nf-pipelines/
 │   └── nf-trim-generode-porting-plan.md # some notes on creating nf-trim-generode
 ├── environments/
 │   └── nf-angsd-diversity.yml  # Conda environment file for Wahab used by some pipelines
-├── nf-trim-merged-unmerged/    # Takes modern reads. Trims modern to an average length and maps.
-│                               # Usually run after Generode.
+├── nf-trim-merged-unmerged/    # Takes modern reads. Trims modern to an average length 
+│                               # and maps to the reference. Usually run after Generode.
 ├── nf-trim-bwamem/             # Like nf-trim-merged-unmerged, but uses bwamem
 ├── nf-trim-generode/           # Takes historical and modern reads. Trims modern to average
 │                               # historical length and maps both with the same mapper. Also
 │                               # masks repeats in the reference. 
 │                               # A merger of Generode and nf-trim-merged-unmerged. 
 │                               # Runs QA/QC with fastp, fastqc, amber, and mapdamage 
-├── nf-angsd-diversity/         # Runs angsd for genotypes, calculates diversity on snps and a PCA.
-│                               # Run this after nf-trim-*
-└── nf-angsd-selection/         # Like nf-angsd-diversity. Adds a selection scan, ld-pruning, admixture and fst.
-                                # Runs diversity on all putatively neutral sites (including monomorphic)
+├── nf-angsd-diversity/         # Runs angsd for genotypes, calculates diversity on snps and a
+│                               # PCA. Run this after nf-trim-*
+└── nf-angsd-selection/         # Like nf-angsd-diversity. Adds a selection scan, 
+                                # ld-pruning, admixture and fst. Runs diversity on all 
+                                # putatively neutral sites (including monomorphic)
 
 ```
 ## QC steps before running the pipelines
-The original pipelines (nf-trim-merged-unmerged and nf-angsd-diversity) were developed as follow up steps for GenErode. Later pipelines (nf-trim-generode) was developed to avoid the need for running Generode first.
+The original pipelines (nf-trim-merged-unmerged and nf-angsd-diversity) were developed as follow up steps for GenErode. Later pipelines (nf-trim-generode) was developed to avoid the need for running Generode first. See the `readme.md` files under each pipeline for more information on using each one.
 
-Before running the original pipelines, it is advised to run the following QC scripts on the GenErode output to estimate average readlength, check sample (breadth of) coverage and mapping bias. These are also used as input for the various pipelines. I also provided a script to generate publication-ready sequencing statistics. Note that all these scripts were originally written by and for Marianne on the Old Dominion WAHAB cluster.
+Before running the original pipelines (e.g., `nf-trim-merged-unmerged` and `nf-angsd-diversity`), it is advised to run the following QC scripts on the GenErode output to estimate average readlength, check sample (breadth of) coverage and mapping bias. These are also used as input for the various pipelines. I also provided a script to generate publication-ready sequencing statistics. Note that all these scripts were originally written by and for Marianne on the Old Dominion WAHAB cluster.
 
 The different scripts are:
 - Average readlength
