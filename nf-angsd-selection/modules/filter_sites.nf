@@ -1,70 +1,7 @@
-// 1. Prepare Neutral Callable Sites for Diversity (Includes Monomorphic Sites)
-process PREPARE_DIVERSITY_SITES {
-    tag "Neutral Callable Sites (Diversity)"
-    publishDir "${params.outdir}/filtered_sites", mode: 'copy'
-
-    input:
-    path callable_bed  // params.bed_file
-    path chisq_results   // ACER output or []
-
-    output:
-    path "diversity_neutral.pos"    , emit: pos
-    path "diversity_neutral.pos.bin", emit: bin
-    path "diversity_neutral.pos.idx", emit: idx
-
-    script:
-    """
-    # Convert BED file (chr start end) to 2-column POS file (chr pos)
-    awk 'BEGIN{OFS="\t"} {for(i=\$2+1; i<=\$3; i++) print \$1, i}' ${callable_bed} > all_callable.pos
-
-    # Exclude candidate selection loci if present
-    if [ -f "${chisq_results}" ] && [ -s "${chisq_results}" ]; then
-        awk -v fdr="${params.fdr_cutoff}" 'NR>1 && \$NF <= fdr {print \$1"\t"\$2}' ${chisq_results} > selected_coords.txt
-        awk 'NR==FNR {sel[\$1"\t"\$2]; next} !((\$1"\t"\$2) in sel)' selected_coords.txt all_callable.pos > diversity_neutral.pos
-    else
-        cp all_callable.pos diversity_neutral.pos
-    fi
-
-    # Index for ANGSD
-    angsd sites index diversity_neutral.pos
-    """
-}
-
-// 2. Prepare Neutral & LD-Pruned Sites for PCA & Admixture (Polymorphic Only)
-process PREPARE_PCA_SITES {
-    tag "Neutral & Pruned Loci (PCA/Admix)"
-    publishDir "${params.outdir}/filtered_sites", mode: 'copy'
-
-    input:
-    path poly_snps   // sites.snps (polymorphic sites)
-    path pruned_pos  // LD-pruned sites or []
-    path chisq_results // ACER output or []
-
-    output:
-    path "pca_neutral.pos", emit: pos
-
-    script:
-    """
-    # Base set: Use LD-pruned sites if available, otherwise use all polymorphic sites
-    if [ -f "${pruned_pos}" ] && [ -s "${pruned_pos}" ]; then
-        cp ${pruned_pos} base_pca.pos
-    else
-        cp ${poly_snps} base_pca.pos
-    fi
-
-    # Exclude candidate selection loci if present
-    if [ -f "${chisq_results}" ] && [ -s "${chisq_results}" ]; then
-        awk -v fdr="${params.fdr_cutoff}" 'NR>1 && \$NF <= fdr {print \$1"\t"\$2}' ${chisq_results} > selected_coords.txt
-        awk 'NR==FNR {sel[\$1"\t"\$2]; next} !((\$1"\t"\$2) in sel)' selected_coords.txt base_pca.pos > pca_neutral.pos
-    else
-        cp base_pca.pos pca_neutral.pos
-    fi
-    """
-}
-
 process PREPARE_SITE_SETS {
     tag "Generate Complete Site Set Library"
-    publishDir "${params.outdir}/sites", mode: 'copy'
+    publishDir "${params.outdir}/sites", mode: 'copy', pattern: "site_counts.tsv"
+    publishDir "${params.outdir}/large_data/sites", mode: 'copy', pattern: "*.pos*"
 
     input:
     path pop_intersect  // pop_intersect.pos (Venn diagram output)
@@ -84,11 +21,10 @@ process PREPARE_SITE_SETS {
     path "snps_pruned_neutral.pos"      , emit: snps_pruned_neutral_pos
     path "snps_pruned_neutral.pos.bin"  , emit: snps_pruned_neutral_bin
     path "snps_pruned_neutral.pos.idx"  , emit: snps_pruned_neutral_idx
+    path "site_counts.tsv"              , emit: summary
 
     script:
     """
-    module load container_env angsd
-
     cp ${pop_intersect} all_callable.pos
     awk 'NR==FNR {pop[\$1"\t"\$2]; next} (\$1"\t"\$2) in pop' all_callable.pos ${poly_snps} > all_snps.pos
 
@@ -117,5 +53,15 @@ process PREPARE_SITE_SETS {
     # Index position lists for realSFS site filtering
     angsd sites index callable_neutral.pos
     angsd sites index snps_pruned_neutral.pos
+
+    # Generate site summary using redirected wc -l (avoids filename string parsing)
+    echo -e "site_set\tcount" > site_counts.tsv
+    echo -e "all_callable\t\$(wc -l < all_callable.pos)" >> site_counts.tsv
+    echo -e "all_snps\t\$(wc -l < all_snps.pos)" >> site_counts.tsv
+    echo -e "selected_loci\t\$(wc -l < selected_loci.pos)" >> site_counts.tsv
+    echo -e "callable_neutral\t\$(wc -l < callable_neutral.pos)" >> site_counts.tsv
+    echo -e "snps_neutral\t\$(wc -l < snps_neutral.pos)" >> site_counts.tsv
+    echo -e "snps_pruned\t\$(wc -l < snps_pruned.pos)" >> site_counts.tsv
+    echo -e "snps_pruned_neutral\t\$(wc -l < snps_pruned_neutral.pos)" >> site_counts.tsv
     """
 }

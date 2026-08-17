@@ -137,8 +137,12 @@ message(sprintf("Total polymorphic SNPs passing filters: %d", nrow(df)))
 
 # Iterative selection scan
 iterative_result <- run_iterative_selection(
-  df = df, regions = regions, ne_generations = ne_generations,
-  test_generations = test_generations, fdr_cutoff = opt$fdr_cutoff, max_rounds = opt$max_rounds
+  df = df, 
+  regions = regions, 
+  ne_generations = ne_generations,
+  test_generations = test_generations, 
+  fdr_cutoff = opt$fdr_cutoff, 
+  max_rounds = opt$max_rounds
 )
 
 iteration_summary <- build_iteration_summary(iterative_result, regions)
@@ -154,3 +158,102 @@ df_neutral_final <- if (length(final_selected_idx) > 0) df[-final_selected_idx, 
 neutral_data_final <- build_region_data(df_neutral_final, regions)
 ne_boot <- bootstrap_ne_by_region(neutral_data_final$mafs, neutral_data_final$covs, regions, generations = ne_generations, n_boot = opt$n_boot)
 write.table(ne_boot, file.path(opt$out_dir, "ne_bootstrap.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
+
+# -----------------------------
+# Chi-squared Manhattan plots
+# -----------------------------
+chisq_dat <- final_outputs$test_results
+if (nrow(chisq_dat) > 0 && all(c("CHR", "BP") %in% names(chisq_dat))) {
+  chisq_dat$CHR <- as.character(chisq_dat$CHR)
+  chisq_dat$BP <- as.numeric(chisq_dat$BP)
+  chisq_dat <- chisq_dat[!is.na(chisq_dat$BP), , drop = FALSE]
+  
+  if (nrow(chisq_dat) > 0) {
+    chr_levels <- unique(chisq_dat$CHR)
+    chisq_dat$CHR <- factor(chisq_dat$CHR, levels = chr_levels)
+    
+    chr_max <- aggregate(BP ~ CHR, chisq_dat, max)
+    chr_max <- chr_max[match(levels(chisq_dat$CHR), chr_max$CHR), ]
+    chr_max$cumstart <- c(0, cumsum(head(chr_max$BP, -1)))
+    
+    chisq_dat$cumBP <- chisq_dat$BP + chr_max$cumstart[match(chisq_dat$CHR, chr_max$CHR)]
+    
+    for (r_name in names(regions)) {
+      pval_col <- paste0(r_name, "_chisq_pval")
+      fdr_col  <- paste0(r_name, "_chisq_fdr")
+      
+      if (pval_col %in% names(chisq_dat)) {
+        plt_dat <- chisq_dat[!is.na(chisq_dat[[pval_col]]) & chisq_dat[[pval_col]] > 0, ]
+        
+        if (nrow(plt_dat) > 0) {
+          plt_dat$logp <- -log10(plt_dat[[pval_col]])
+          plt_dat$is_fdr_sig <- !is.na(plt_dat[[fdr_col]]) & plt_dat[[fdr_col]] < opt$fdr_cutoff
+          
+          p <- ggplot(plt_dat, aes(x = cumBP, y = logp)) +
+            geom_point(color = "grey50", alpha = 0.6, size = 0.6) +
+            geom_point(data = plt_dat[plt_dat$is_fdr_sig, , drop = FALSE],
+                       color = "blue", alpha = 0.9, size = 0.8) +
+            scale_x_continuous(labels = NULL, breaks = NULL) +
+            labs(
+              x = "Genomic position",
+              y = "-log10(Chi-sq p-value)",
+              title = paste("Chi-squared Manhattan Plot (converged) -", r_name),
+              subtitle = paste0("Blue: FDR < ", opt$fdr_cutoff)
+            ) +
+            theme_bw() +
+            theme(legend.position = "none")
+          
+          out_name <- paste0("chisq_manhattan_", r_name, "_final.png")
+          ggsave(file.path(opt$out_dir, out_name), p, width = 12, height = 5, dpi = 300)
+          message(paste("Chi-sq Manhattan plot for", r_name, "saved successfully."))
+        }
+      }
+    }
+  }
+}
+
+# -----------------------------
+# CMH Manhattan plot 
+# -----------------------------
+if (length(regions) > 1) {
+  dat <- final_outputs$cmh_results_full
+  dat <- dat[!is.na(dat$cmh_pval) & dat$cmh_pval > 0, , drop = FALSE]
+  
+  if (nrow(dat) > 0 && all(c("CHR", "BP") %in% names(dat))) {
+    dat$CHR <- as.character(dat$CHR)
+    dat$BP <- as.numeric(dat$BP)
+    dat <- dat[!is.na(dat$BP), , drop = FALSE]
+  
+    if (nrow(dat) > 0) {
+      chr_levels <- unique(dat$CHR)
+      dat$CHR <- factor(dat$CHR, levels = chr_levels)
+  
+      chr_max <- aggregate(BP ~ CHR, dat, max)
+      chr_max <- chr_max[match(levels(dat$CHR), chr_max$CHR), ]
+      chr_max$cumstart <- c(0, cumsum(head(chr_max$BP, -1)))
+  
+      dat$cumBP <- dat$BP + chr_max$cumstart[match(dat$CHR, chr_max$CHR)]
+      dat$logp <- -log10(dat$cmh_pval)
+      dat$is_fdr_sig <- !is.na(dat$cmh_fdr) & dat$cmh_fdr < opt$fdr_cutoff
+  
+      p <- ggplot(dat, aes(x = cumBP, y = logp)) +
+        geom_point(color = "grey50", alpha = 0.6, size = 0.6) +
+        geom_point(data = dat[dat$is_fdr_sig, , drop = FALSE],
+                   color = "red", alpha = 0.9, size = 0.8) +
+        scale_x_continuous(labels = NULL, breaks = NULL) +
+        labs(
+          x = "Genomic position",
+          y = "-log10(CMH p-value)",
+          title = "CMH Manhattan Plot (converged)",
+          subtitle = paste0("Red: FDR < ", opt$fdr_cutoff)
+        ) +
+        theme_bw() +
+        theme(legend.position = "none")
+  
+      ggsave(file.path(opt$out_dir, "cmh_manhattan_final.png"), p, width = 12, height = 5, dpi = 300)
+      message("CMH Manhattan plot saved successfully.")
+    }
+  }
+} else {
+  message("Only one region provided; skipping CMH Manhattan plot.")
+}

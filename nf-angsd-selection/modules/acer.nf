@@ -3,7 +3,7 @@ process RUN_ACER {
     publishDir "${params.outdir}/selection", mode: 'copy'
 
     input:
-    path mafs           // All ${pop}_${era}.mafs.gz files from ANGSD_GL_POP
+    path mafs           // All ${region}_${era}.mafs.gz files from ANGSD_GL_POP
     path var_sites      // Polymorphic sites index (sites.snps)
     path helpers        // acer_helpers.R
     path run_script     // run_acer.R
@@ -19,18 +19,17 @@ process RUN_ACER {
     """
     # 1. Intersect population MAF files with polymorphic SNP list to discard monomorphic sites
     for maf in *.mafs.gz; do
-        zcat \$maf | awk 'NR==1 || NR==FNR {a[\$1"\t"\$2]; next} (\$1"\t"\$2) in a' ${var_sites} - | gzip > var_\${maf}
+        zcat \$maf | awk 'NR==FNR {a[\$1"\t"\$2]; next} FNR==1 || (\$1"\t"\$2) in a' ${var_sites} - | gzip > var_\${maf}
     done
 
     # 2. Parse sample CSV to construct --hist_mafs, --mod_mafs, and --region_names CLI arguments
-    # Expects columns: sample, pop, era, region
+    # Expects columns: sample, region, era, region
     HIST_MAFS=\$(Rscript -e '
         df <- read.csv("${samplesheet}")
         regs <- unique(df\$region)
         hist_files <- sapply(regs, function(r) {
-            pop <- df\$pop[df\$region == r & tolower(df\$era) %in% c("historic", "hist", "era1")][1]
-            era <- df\$era[df\$region == r & tolower(df\$era) %in% c("historic", "hist", "era1")][1]
-            paste0("var_", pop, "_", era, ".mafs.gz")
+            era <- df\$era[df\$region == r & tolower(df\$era) %in% c("historic", "historical", "hist", "era1")][1]
+            paste0("var_", r, "_", era, ".mafs.gz")
         })
         cat(paste(hist_files, collapse=","))
     ')
@@ -39,9 +38,8 @@ process RUN_ACER {
         df <- read.csv("${samplesheet}")
         regs <- unique(df\$region)
         mod_files <- sapply(regs, function(r) {
-            pop <- df\$pop[df\$region == r & tolower(df\$era) %in% c("modern", "mod", "era2")][1]
             era <- df\$era[df\$region == r & tolower(df\$era) %in% c("modern", "mod", "era2")][1]
-            paste0("var_", pop, "_", era, ".mafs.gz")
+            paste0("var_", r, "_", era, ".mafs.gz")
         })
         cat(paste(mod_files, collapse=","))
     ')

@@ -4,6 +4,8 @@ process ANGSD_GL_ALL {
     input:
     val contigs
     path bamlist
+    tuple path(sites_pos), path(sites_bin), path(sites_idx) // Accepts bundled files
+    tuple path(ref), path(ref_fai)
 
     output:
     tuple val(contigs), path("${params.species}.${contigs}.mafs.gz"), emit: mafs
@@ -12,7 +14,7 @@ process ANGSD_GL_ALL {
     script:
     """
     # 1. Total target length from BED file
-    target_bp=\$(awk 'BEGIN{s=0} {s += \$3 - \$2} END{print s}' ${params.bed_file})
+    target_bp=\$(awk 'BEGIN{s=0} {s += \$3 - \$2 +1} END{print s}' ${params.bed_file})
 
     # 2. Calculate total mapped bases across all BAMs in bamlist using index files
     total_bases=0
@@ -38,14 +40,14 @@ process ANGSD_GL_ALL {
         -minMapQ 25 -minQ 30 \
         -SNP_pval 1e-6 \
         -minInd \$min_ind \
-        -setmaxdepth \$max_depth \
+        -setMaxDepth \$max_depth \
         -uniqueOnly 1 -remove_bads 1 \
         -skipTriallelic 0 \
         -doCounts 1 -doDepth 1 -dumpCounts 1 \
         -noTrans 1 \
-        -P 1 \
-        -ref ${params.reference} \
-        -sites ${params.bed_file} \
+        -P ${task.cpus ?: 8} \
+        -ref ${ref} \
+        -sites ${sites_pos} \
         -r ${contigs} \
         -out ${params.species}.${contigs}
     """
@@ -78,7 +80,7 @@ process ANGSD_COLLECT_OUTPUT {
 }
 
 process ANGSD_EXTRACT_SITES {
-    publishDir "${params.outdir}/sites", mode: 'copy'
+    publishDir "${params.outdir}/large_data/sites", mode: 'copy'
     
     input:
     path all_mafs
@@ -109,7 +111,7 @@ process INDEX_BED_SITES {
     // Index the bed file to make a list of all callable sites for downstream analyses. 
     // This is useful for calculating diversity statistics across all callable sites, not just SNPs.
     tag "Index BED Sites"
-    publishDir "${params.outdir}/sites", mode: 'copy'
+    publishDir "${params.outdir}/large_data/sites", mode: 'copy'
 
     input:
     path bed_file
@@ -122,10 +124,10 @@ process INDEX_BED_SITES {
 
     script:
     """
-    cp ${bed_file} all_sites.pos
+    # Convert 3-column ANGSD BED (1-based start, 1-based end) to 2-column ANGSD POS (1-based pos)
+    awk 'BEGIN{OFS="\t"} {for(i=\$2; i<=\$3; i++) print \$1, i}' ${bed_file} > all_sites.pos
     angsd sites index all_sites.pos
 
-    # Extract unique chromosome/scaffold region headers for ANGSD -rf
     cut -f1 all_sites.pos | awk '!seen[\$0]++' | awk '{print \$0 ":"}' > all_sites.regions
     """
 }

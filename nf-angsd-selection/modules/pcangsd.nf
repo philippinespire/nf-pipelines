@@ -11,7 +11,7 @@ process PCANGSD {
 
     script:
     """
-    pcangsd -b ${all_beagle} --admix -t 8 -o ${params.species}
+    pcangsd -b ${all_beagle} --admix -t ${task.cpus ?: 8} -o ${params.species}
     """
 }
 

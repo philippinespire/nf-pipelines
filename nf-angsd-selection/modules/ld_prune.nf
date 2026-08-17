@@ -25,7 +25,7 @@ process LD_PRUNE_CONTIG {
     fi
 
     # 4. Run ngsLD on just this contig
-    crun ngsLD \\
+    ngsLD \\
         --geno ${beagle} \\
         --probs \\
         --pos ${contig}.pos \\
@@ -43,13 +43,9 @@ process LD_PRUNE_CONTIG {
 
     # 6. Format the pairwise table (Filter out empty r2 columns)
     max_bp_dist=\$(awk -v kb="${params.max_kb_dist}" 'BEGIN{printf "%.6f", kb*1000}')
-    
-    first_dist_field=\$(awk 'NR==1 {print \$7; exit}' ${contig}.ld)
-    if [[ "\$first_dist_field" =~ ^[0-9]+([.][0-9]+)?\$ ]]; then
-        awk 'BEGIN{OFS="\t"; print "site1","site2","dist","r2"} \$8 != "" {print \$1,\$4,\$7,\$8}' ${contig}.ld > ${contig}_prune_input.tsv
-    else
-        awk 'BEGIN{OFS="\t"; print "site1","site2","dist","r2"} NR>1 && \$8 != "" {print \$1,\$4,\$7,\$8}' ${contig}.ld > ${contig}_prune_input.tsv
-    fi
+
+    # Extract site1 (1), site2 (2), dist (3), and r2_EM (7)
+    awk 'BEGIN{OFS="\t"; print "site1","site2","dist","r2"} \$7 != "" {print \$1,\$2,\$3,\$7}' ${contig}.ld > ${contig}_prune_input.tsv
 
     # 7. Safety check: If the TSV only has a header (<= 1 line), skip prune_graph
     if [ \$(wc -l < ${contig}_prune_input.tsv) -le 1 ]; then
@@ -60,7 +56,7 @@ process LD_PRUNE_CONTIG {
     weight_filter="dist <= \${max_bp_dist} && r2 >= ${params.min_weight}"
 
     # 8. Run prune_graph on this tiny graph
-    crun prune_graph \\
+    prune_graph \\
         --header \\
         --in ${contig}_prune_input.tsv \\
         --weight-field "r2" \\
@@ -83,7 +79,7 @@ process LD_PRUNE_CONTIG {
 
 process MERGE_PRUNED_SITES {
     tag "Merge Pruned Sites"
-    publishDir "${params.outdir}/ld_pruning", mode: 'copy'
+    //publishDir "${params.outdir}/ld_pruning", mode: 'copy'
 
     input:
     path pos_files
@@ -131,41 +127,24 @@ process SUBSET_BEAGLE {
     """
     # Match the marker ID column (col 1 of beagle) to the pruned positions.
     # This robust parser handles chromosomes containing any number of underscores.
-    zcat ${original_beagle} | awk -F'\\t' -v OFS='\\t' '
-        FNR == NR { 
-            # Robustly split the pruned_pos columns by any whitespace (tabs or spaces)
-            split(\$0, a, /[ \\t]+/)
-            if (a[1] != "" && a[2] != "") {
-                keys[a[1], a[2]] = 1 
-            }
-            next 
+    zcat ${original_beagle} | awk -F'\t' -v OFS='\t' '
+        FILENAME == ARGV[1] {
+            split(\$0, a, /[ \t]+/)
+            if (a[1] != "" && a[2] != "") keys[a[1], a[2]] = 1
+            next
         }
         {
-            if (FNR == 1) { 
-                print \$0 
-                next 
-            }
-            
-            # Extract chromosome and position from marker ID (col 1)
+            if (FNR == 1) { print \$0; next }
             marker = \$1
-            # Clean up trailing alleles if they exist (e.g., _A_G or _C_T)
             sub(/(_[A-Za-z])+\$/, "", marker)
-            
-            # Find the last underscore which separates chromosome from position
             last_under = 0
             for (i = length(marker); i > 0; i--) {
-                if (substr(marker, i, 1) == "_") {
-                    last_under = i
-                    break
-                }
+                if (substr(marker, i, 1) == "_") { last_under = i; break }
             }
-            
             if (last_under > 0) {
                 chr = substr(marker, 1, last_under - 1)
                 pos = substr(marker, last_under + 1)
-                if ((chr, pos) in keys) {
-                    print \$0
-                }
+                if ((chr, pos) in keys) print \$0
             }
         }
     ' ${pruned_pos} - | gzip -c > pruned.beagle.gz
