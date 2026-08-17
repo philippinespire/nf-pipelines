@@ -157,6 +157,7 @@ On the first run, a new conda environment will be created. This can take some ti
 
 All pipeline outputs are written to the directory specified by `--outdir` (default: `./results/`). Large files are isolated in the `large_data/` directory so they can be easily managed or excluded via `.gitignore`.
 
+```
 results/
 ├── inputfiles/                # Input BAM file lists
 ├── sites/                     # Summary metrics across generated site set libraries
@@ -171,7 +172,7 @@ results/
     ├── saf/                   # Population sample allele frequency distributions
     ├── thetas/                # Per-site nucleotide diversity estimates
     └── fst/                   # Binary FST indices, 2D SFS matrices, and windowed FST tables
-
+```
 
 ### Output Directories Tracked by Git
 
