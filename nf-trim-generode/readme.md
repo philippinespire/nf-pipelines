@@ -17,8 +17,12 @@ The pipeline can be installed directly via git:
 git clone https://github.com/philippinespire/nf-pipelines.git
 cd ./nf-trim-merged-unmerged
 ```
-This GitHub repository also contains other nextflow pipelines.
 
+> [!NOTE]
+> This GitHub repository also contains other nextflow pipelines.
+
+> [!IMPORTANT]
+> Because you are likely to be cloning the nf-pipelines repo into your project repository, you should either add it to the `.gitignore` so it's not tracked, or delete the `nf-pipelines/.git` dir
 
 ### Personal Conda Prerequisite
 **Important for WAHAB HPC** For nextflow to correctly install conda environments, a personal conda installation is necessary. Installation instruction for miniconda (my personal favorite) and how to use it can be found [here](https://www.anaconda.com/docs/getting-started/miniconda/main)
