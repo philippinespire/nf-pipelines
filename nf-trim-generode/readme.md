@@ -25,7 +25,8 @@ cd ./nf-trim-merged-unmerged
 > Because you are likely to be cloning the nf-pipelines repo into your project repository, you should either add it to the `.gitignore` so it's not tracked, or delete the `nf-pipelines/.git` dir
 
 ### Personal Conda Prerequisite
-**Important for WAHAB HPC** For nextflow to correctly install conda environments, a personal conda installation is necessary. Installation instruction for miniconda (my personal favorite) and how to use it can be found [here](https://www.anaconda.com/docs/getting-started/miniconda/main)
+> [!IMPORTANT]
+> **For WAHAB HPC** For nextflow to correctly install conda environments, a personal conda installation is necessary. Installation instruction for miniconda (my personal favorite) and how to use it can be found [here](https://www.anaconda.com/docs/getting-started/miniconda/main)
 
 ## Folder structure
 Before running, this is the setup:
