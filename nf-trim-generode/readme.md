@@ -3,7 +3,7 @@
 ## Overview
 This is a Nextflow DSL2 workflow designed for processing high-throughput sequencing data across two eras (historical and modern cohorts). It is an extension of nf-trim-merged-unmerged that incorporates GenErode features and takes both historical and modern reads. It does masking of repeats in the reference genome, adapter trimming, overlapping read merging, modern read trimming, mapping, and optional fastqc quality evaluation, AMBER evaluation, and mapdamage rescaling of historical bam files.
 
-The pipeline maps historical samples with a user-chosen algorith to extract their average mapped read length distribution, uses this value to trim modern reads (limiting temporal length biases), and selects an alignment algorithm (`bwa aln` vs `bwa mem`) based on the historical average read length. It re-maps the historical reads if the mapper is different than initially done.
+The pipeline maps historical samples with a user-chosen algorithm to extract their average mapped read length distribution, uses this value to trim modern reads (limiting temporal length biases), and selects an alignment algorithm (`bwa aln` vs `bwa mem`) based on the historical average read length. It re-maps the historical reads if the mapper is different than initially done.
 
 It is built to run on Old Dominion University's WAHAB cluster. 
 
