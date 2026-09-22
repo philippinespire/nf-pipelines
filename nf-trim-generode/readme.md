@@ -3,7 +3,7 @@
 ## Overview
 This is a Nextflow DSL2 workflow designed for processing high-throughput sequencing data across two eras (historical and modern cohorts). It is an extension of nf-trim-merged-unmerged that incorporates GenErode features and takes both historical and modern reads. It does masking of repeats in the reference genome, adapter trimming, overlapping read merging, modern read trimming, mapping, and optional fastqc quality evaluation, AMBER evaluation, and mapdamage rescaling of historical bam files.
 
-The pipeline maps historical samples with a user-chosen algorith to extract their average mapped read length distribution, uses this value to trim modern reads (limiting temporal length biases), and selects an alignment algorithm (`bwa aln` vs `bwa mem`) based on the historical average read length. It re-maps the historical reads if the mapper is different than initially done.
+The pipeline maps historical samples with a user-chosen algorithm to extract their average mapped read length distribution, uses this value to trim modern reads (limiting temporal length biases), and selects an alignment algorithm (`bwa aln` vs `bwa mem`) based on the historical average read length. It re-maps the historical reads if the mapper is different than initially done.
 
 It is built to run on Old Dominion University's WAHAB cluster. 
 
@@ -17,11 +17,16 @@ The pipeline can be installed directly via git:
 git clone https://github.com/philippinespire/nf-pipelines.git
 cd ./nf-trim-merged-unmerged
 ```
-This GitHub repository also contains other nextflow pipelines.
 
+> [!NOTE]
+> This GitHub repository also contains other nextflow pipelines.
+
+> [!IMPORTANT]
+> Because you are likely to be cloning the nf-pipelines repo into your project repository, you should either add it to the `.gitignore` so it's not tracked, or delete the `nf-pipelines/.git` dir
 
 ### Personal Conda Prerequisite
-**Important for WAHAB HPC** For nextflow to correctly install conda environments, a personal conda installation is necessary. Installation instruction for miniconda (my personal favorite) and how to use it can be found [here](https://www.anaconda.com/docs/getting-started/miniconda/main)
+> [!IMPORTANT]
+> **For WAHAB HPC** For nextflow to correctly install conda environments, a personal conda installation is necessary. Installation instruction for miniconda (my personal favorite) and how to use it can be found [here](https://www.anaconda.com/docs/getting-started/miniconda/main)
 
 ## Folder structure
 Before running, this is the setup:
