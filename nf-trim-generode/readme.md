@@ -48,7 +48,7 @@ nf-trim-merged-unmerged/
 The pipeline requires the following inputfiles:
 
 * Reference (fasta or fna format)
-* Reference index files (.bwt, .ann, .sa, .pac, .ann, .amb )
+* Reference index and dictionary files (.fai and .dict)
 * CSV file with columns sample and era with the sample name and era (historical or modern) of all fastq files to be processed (`inputfiles/samplesheet.csv`). See [samplesheet_example.csv](examples/samplesheet_example.csv).
 * Directory containing all fastq files
 
@@ -88,6 +88,12 @@ ln -s /path/to/raw_reads/*fastq.gz ./data/symlinks
     else 
         print $0 ",modern"
 }') > ./inputfiles/samplesheet.csv
+
+# Create a dictionary and index for the reference if it doesn't exist yet (adjust this to match your files)
+module load container_env samtools/1.19
+crun.samtools samtools dict <reference>.fna -o <reference>.dict
+crun.samtools samtools faidx <reference>.fna
+
 
 # Create softlinks to the genomic reference files:
 # Adjust the path to the reference if necessary
@@ -153,12 +159,13 @@ tmux a -t nextflow
 Then start the nextflow pipeline as follows (while in tmux):
 
 ```bash
+# load bash with conda
+bash
 # Load the nextflow module
-module load container_env
-module load nextflow
+module load container_env nextflow
 
 # Start the run
-nextflow run main.nf -profile standard -resume
+nextflow run main.nf -profile wahab -resume
 ```
 
 If everything went well, the pipeline will run and submit jobs to the queue. 

@@ -104,7 +104,6 @@ process REPEAT_MODELER {
 process EXTRACT_CPG {
     tag "Extracting CpG sites from ${ref_fasta.baseName}"
     label 'process_low'
-    module 'container_env:python3'
     publishDir "${params.outdir}/data/reference", mode: 'copy'
 
     input:
@@ -115,7 +114,7 @@ process EXTRACT_CPG {
 
     script:
     """
-    crun python3 -c '
+    python3 -c '
     import sys
 
     ref_fasta = "${ref_fasta}"
