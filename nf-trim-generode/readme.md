@@ -1,11 +1,20 @@
 # nf-trim-generode: Historic & Modern DNA Mapping Pipeline
 
 ## Overview
-This is a Nextflow DSL2 workflow designed for processing high-throughput sequencing data across two eras (historical and modern cohorts). It is an extension of nf-trim-merged-unmerged that incorporates GenErode features and takes both historical and modern reads. It does masking of repeats in the reference genome, adapter trimming, overlapping read merging, modern read trimming, mapping, and optional fastqc quality evaluation, AMBER evaluation, and mapdamage rescaling of historical bam files.
+This is a Nextflow DSL2 workflow designed for processing high-throughput sequencing data across two eras (historical and modern cohorts). It is an extension of `nf-trim-merged-unmerged` that incorporates GenErode features and takes both historical and modern reads. 
 
-The pipeline maps historical samples with a user-chosen algorithm to extract their average mapped read length distribution, uses this value to trim modern reads (limiting temporal length biases), and selects an alignment algorithm (`bwa aln` vs `bwa mem`) based on the historical average read length. It re-maps the historical reads if the mapper is different than initially done.
+The pipeline performs:
 
-It is built to run on Old Dominion University's WAHAB cluster. 
+* De novo repeat modeling, repeat masking, and CpG site identification on the reference genome.
+* Generation of clean site-index files for downstream ANGSD analyses.
+* Adapter trimming and overlapping read pair merging (fastp).
+* Initial mapping of historical samples to calculate average mapped read length.
+* Automated mapper selection (bwa aln vs bwa mem) based on empirical historical read lengths.
+* Read trimming/splitting of modern reads down to historical read lengths to eliminate temporal length bias.
+* Conditional re-mapping for historical samples if the optimal mapper differs from the first mapping.
+* Custom duplicate removal, GATK Indel Realignment, depth statistics calculation, and optional FastQC, AMBER alignment evaluation, and mapDamage base quality rescaling.
+
+The pipeline is configured to run on Old Dominion University's WAHAB cluster using Nextflow DSL2 and Slurm/Conda execution profiles.
 
 ---
 
@@ -37,23 +46,52 @@ nf-trim-merged-unmerged/
 │   └── symlinks/          # Symbolic links pointing to raw paired-end sequence files  
 ├── inputfiles/  
 │   ├── samplesheet.csv    # Target metadata sheet (sample,era)  
-│   └── fastq_filenames.txt # Legacy tracker single-column fallback sheet  
+│   └── fastq_filenames.txt # Fallback single-column sample ID list (optional)
 ├── scripts/  
-│   ├── split_reads.sh     # Custom length splitting script  
+│   ├── split_reads.sh     # Custom length splitting script for long, merged reads
 │   └── samremovedup.py    # Custom python script for duplicate removal  
-├── main.nf  
-├── mapping_modules.nf  
-└── nextflow.config  
+├── main.nf                # Master workflow execution script
+├── mapping_modules.nf     # Module definitions for BWA ALN/MEM mapping
+└── nextflow.config        # Process resource configs and cluster profiles
 ```
 
-## Parameters
+## Parameters & Configuration
+
+All core parameters are declared in `main.nf` and can be customized in the script or overridden via the command line:
+
+```
+// --- Input & Path Parameters ---
+params.samplesheet              = "${projectDir}/inputfiles/samplesheet.csv"           // Preferred way to provide sample metadata, including sample IDs and eras (modern or historical).
+params.samples_file             = "${projectDir}/inputfiles/fastq_filenames.txt"       // Legacy way to provide sample metadata. One-column text file with sample IDs. All modern by default.
+params.indir                    = "${projectDir}/data/symlinks"                        // Directory where raw FASTQ files are expected.
+params.outdir                   = "${projectDir}/results"                              // Directory where all output files will be written.
+params.reference                = "${projectDir}/data/reference/<reference>.fasta"     // Path to reference genome FASTA file.
+params.bed_file                 = "${projectDir}/data/reference/<reference>.repma.bed" // Input bed file of repeats and CpG sites for downstream ANGSD analyses. Required if run_repeatmasking = false. Not used if run_repeatmasking = true.
+
+// --- Pipeline Control & Logic Flags ---
+params.historical_era           = "historical" // String identifier used in the samplesheet era column
+params.historical_mapper        = "aln"        // Initial mapper choice for Pass 1 ("aln" or "mem")
+params.run_repeatmasking        = true         // Set to false to bypass RepeatModeler/Masker and use params.bed_file
+params.run_historical_fastqc    = true         // Run FastQC on historical reads after fastp
+params.run_historical_mapdamage = true         // Run mapDamage assessment & base rescaling on historical BAMs
+params.run_historical_amber     = true         // Run AMBER quality evaluation on historical BAMs
+params.run_modern_amber         = true         // Run AMBER quality evaluation on modern BAMs
+
+// --- Technical & Filtering Thresholds ---
+params.bam_q                    = 25           // Mapping quality threshold for BAM filtering and length calculation
+params.trimlength               = 85           // Fallback trim length if no historical reads pass mapping filters
+params.bwa_threads              = 4            // Thread count per BWA process
+```
+
+Note that running repeat masking is a fairly slow process (a few hours). If you don't run it, however, you will need to specify a BED file.
+
 
 ### Inputfiles
 
 The pipeline requires the following inputfiles:
 
-* Reference (fasta or fna format)
-* Reference index and dictionary files (.fai and .dict)
+* Reference (fasta format: .fasta, .fa, .fna)
+* Reference index and dictionary files (.fai, .dict, .bwt, .pac, .ann, .amb, and .sa)
 * CSV file with columns sample and era with the sample name and era (historical or modern) of all fastq files to be processed (`inputfiles/samplesheet.csv`). See [samplesheet_example.csv](examples/samplesheet_example.csv).
 * Directory containing all fastq files
 
@@ -95,9 +133,14 @@ ln -s /path/to/raw_reads/*fastq.gz ./data/symlinks
 }') > ./inputfiles/samplesheet.csv
 
 # Create a dictionary and index for the reference if it doesn't exist yet (adjust this to match your files)
+salloc # the bwa in particular can be computationally intensive
 module load container_env samtools/1.19
 crun.samtools samtools dict <reference>.fna -o <reference>.dict
 crun.samtools samtools faidx <reference>.fna
+module unload container_env samtools/1.19
+module load bwa
+crun bwa index <reference>.fna
+exit # leave the salloc if it was used
 
 
 # Create softlinks to the genomic reference files:
@@ -106,38 +149,41 @@ ln -s /path/to/reference/<reference>.fasta ./data/reference/
 ln -s /path/to/reference/<reference>.fasta.* ./data/reference/
 ```
 
-### Configuration
-
-In the `main.nf` file, adjust the parameters to fit your project:
-
-```bash
-// --- Default Parameters ---
-params.samplesheet = "${projectDir}/inputfiles/samplesheet.csv" // This is the preferred way to provide sample metadata, including sample IDs and eras (modern or historical)
-params.indir        = "${projectDir}/data/symlinks" // This is the directory where the raw FASTQ files are expected to be located. The pipeline will look for files named <sample_id>_R1.fastq.gz and <sample_id>_R2.fastq.gz in this directory.
-params.outdir       = "${projectDir}/results" // This is the directory where all output files will be written. The pipeline will create subdirectories for different types of output (e.g., fastq, bam, stats).
-params.reference    = "${projectDir}/data/reference/<reference>.fasta" // This is the path to the reference genome FASTA file that will be used for read mapping. The <reference> placeholder should be replaced with the actual reference name (e.g., hg19, mm10).
-mm10). This file is used for filtering reads during mapping and for calculating depth statistics.
-params.historical_mapper        = "aln" // Default starting point for historical read mapping
-params.run_repeatmasking        = true // Whether to run RepeatModeler and RepeatMasker on the reference genome (true/false). If false, it needs an input bed file of repeats and CpG sites for downstream ANGSD analyses.
-params.run_historical_fastqc    = true // Whether to run fastqc (quality assessment) on the historical reads after fastp quality trimming
-params.run_historical_mapdamage = true // Whether to run mapdamage assessment and bam rescaling on the historical reads
-params.run_historical_amber     = true // Whether to run amber quality assessment on the mapped historical reads
-params.run_modern_amber         = true // Whether to run amber quality assessment on the mapped modern reads
+## Pipeline Logic & Execution Flow
 ```
-Note that running repeat masking is a fairly slow process (a few hours). If you don't run it, however, you will need to specify a BED file (see the header in the `main.nf` file for details).
+1. Reference Preparation (RepeatModeler -> RepeatMasker -> CpG Extraction -> ANGSD Sites Index)
+                                  │
+2. Historical Read Processing (fastp -> initial BWA Mapping -> Calculate Mapped Read Length)
+                                  │
+      ┌───────────────────────────┴───────────────────────────┐
+      ▼                                                       ▼
+Mapped Length ≤ 80 bp                                Mapped Length > 80 bp
+  -> Select `bwa aln`                                  -> Select `bwa mem`
+      │                                                       │
+      └───────────────────────────┬───────────────────────────┘
+                                  │
+3. Modern Read Normalization (fastp -> Truncate/Split Reads to Historical Avg Length -> Mapping)
+                                  │
+4. BAM Post-Processing (Duplicate Removal -> GATK Indel Realignment -> Depth QC)
+                                  │
+5. Downstream Evaluation (Optional mapDamage Rescaling & AMBER Reports)
+```
 
-Other parameters that you are less likely to adjust can be found in the header of `main.nf`.
-
-## Pipeline Features
-1. Two metadata options: The configuration ingests sample information from one of two channels:
-   1. Samplesheet (Preferred): Parses a comma-separated file (`inputfiles/samplesheet.csv`) containing sample identifiers and era tags (modern vs historical).
-   2. Legacy Mode (Fallback): Scans a single-column flat file (`inputfiles/fastq_filenames.txt`) and sends all targets to the modern processing track.
-2. Two-pass historical mapping
-   1. First-pass mapping: Historical segments are cleaned via fastp and aligned using a baseline algorithm specified by the user (Default: `bwa aln`).
-   2. Mapped length calculation: High-quality alignments are used to calculate average read length.
-   3. Mapper choice: If the calculated read length is $\le$ 80 bp, the pipeline sets `bwa aln` (optimal for short, degraded molecules). If the calculated true mapped length is > 80 bp, the pipeline upgrades to `bwa mem`.
-   4. Second-pass mapping: A second mapping pass is executed only if the chosen mapper differs from the first pass. 
-3. Modern trimming: Long modern reads are split down the middle or truncated to match the average length of the historical set, reducing length-bias signatures in downstream analyses.
+1. Reference Masking & ANGSD Site Indexing:
+   * If `params.run_repeatmasking` = true, runs RepeatModeler for de novo repeat discovery, extracts CpG sites using a Python parser, and merges them via RepeatMasker.
+   * Prepares 1-based inclusion sites files (`.repma.angsd.txt`), indexing them via angsd sites index for downstream genotype likelihood estimation.
+2. Dynamic Mapper Selection & Two-Pass Mapping:
+   * Historical reads undergo quality filtering and adapter trimming via fastp.
+   * Reads map initially using `params.historical_mapper`. High-quality alignments ($Q \ge \text{params.bam\_q}$) are parsed to compute the true average mapped read length.
+   * If average mapped read length is $\le 80\text{ bp}$, `bwa aln` is selected; if $> 80\text{ bp}$, `bwa mem` is selected.
+   * If the chosen algorithm differs from the initial mapping, re-mapping is automatically executed.
+3. Modern Read Normalization:
+   * Modern long reads are truncated (`seqtk trimfq`) or split down the middle (`split_reads.sh`) to match the calculated historical average read length, eliminating temporal length bias signatures.
+4. BAM Processing & Downstream QC:
+   * Custom duplicate marking (`samremovedup.py` for merged reads, `samtools markdup` for unmerged pairs).
+   * Local GATK Indel Realignment (`RealignerTargetCreator` and `IndelRealigner`).
+   * Per-sample sequencing depth stats over target BED regions.
+   * Optional `mapDamage` base-quality score rescaling for historical samples and `AMBER` alignment evaluation.
 
 
 ## To Run
@@ -176,22 +222,36 @@ nextflow run main.nf -profile wahab -resume
 If everything went well, the pipeline will run and submit jobs to the queue. 
 On the first run, a new conda environment will be created. This can take some time.
 
-## Output
-Results are organized as
+To override parameters directly from the command line:
 ```
-results
-├── data
-│   ├── bam          # Merged and realigned bam and bam index files
-│   ├── bam_rescaled # Rescaled historical bam and index files
-│   ├── fastq        # Trimmed historical reads (R1 and R2), and trimmed (R1 and R2) and trimmed+merged modern reads
-│   └── reference    # Repeat-masking files: .combined_mask.bed, .cleaned.regions, .chr, .regions, repma.angsd.txt/bin/idx (angsd sites files)
-│       └── modeler  # Output from RepeatModeler
-├── amber            # amber output
-├── depth            # Average sequencing depth for the regions in the BED file, per sample
-├── fastp            # fastp output
-├── fastqc           # fastqc output
-├── mapdamage        # Mapdamage output plots and txt files
-└── stats            # historical_trimlength.txt (calculated ave historical read length)
+nextflow run main.nf \
+  --reference "./data/reference/my_genome.fasta" \
+  --run_repeatmasking false \
+  --bed_file "./data/reference/my_repeats.bed" \
+  --historical_mapper "aln" \
+  -profile wahab \
+  -resume
+```
+
+## Output
+Outputs are written to `params.outdir` (default: `./results`):
+```
+results/
+├── amber/               # AMBER alignment quality plots (.pdf) and summary stats (.txt)
+├── data/
+│   ├── bam/             # Final sorted, deduplicated, and indel-realigned BAM and BAI files
+│   ├── bam_rescaled/    # Post-mapDamage base-quality rescaled BAM and BAI files (historical)
+│   ├── fastq/           # Length-trimmed/split modern FASTQ files
+│   └── reference/       # Masking tracks (.combined_mask.bed) and ANGSD site index files:
+│                        #   ├── <ref>.repma.angsd.txt (.idx, .bin)
+│                        #   ├── <ref>.regions
+│                        #   └── <ref>.chrs
+│       └── modeler/     # De novo repeat library (consensi.fa, families.stk)
+├── depth/               # Average coverage depth stats over target regions (.dpstats.txt)
+├── fastp/               # Fastp HTML and JSON trimming reports
+├── fastqc/              # FastQC reports (.html, .zip) for trimmed reads
+├── mapdamage/           # mapDamage postmortem damage plots (.pdf) and statistic logs (.txt)
+└── stats/               # Calculated historical average read length (historical_trimlength.txt)
 ```
 
 ## Software Stack
@@ -201,6 +261,8 @@ The pipeline uses:
 * seqtk (v1.4) — Down-sampling and structural end-read truncation mapping.
 * bwa (v0.7.17) — Dual aln/mem short-read genome matching engine.
 * samtools (v1.19) — Indexing, sorting, track filtering, and deep map coverage summaries.
+* GATK3 — Target-based local indel realignment (RealignerTargetCreator / IndelRealigner).
+* RepeatModeler / RepeatMasker — Genomic repeat identification and masking.
 * fastqc (v0.11.9) — Per-pass data quality assurance metrics.
 * mapDamage (v2.2) — Postmortem historical damage assessment and base-quality score rescaling.
 * AMBER (v2.0) — Target alignment quality extraction evaluations.
