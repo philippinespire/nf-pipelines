@@ -31,7 +31,7 @@ include { ANGSD_DIVERSITY; PLOT_PI_DIVERSITY                                    
 include { LD_PRUNE_CONTIG; MERGE_PRUNED_SITES; SUBSET_BEAGLE                        } from './modules/ld_prune.nf'
 include { PREPARE_SITE_SETS                                                         } from './modules/filter_sites.nf'
 include { RUN_ACER                                                                  } from './modules/acer.nf'
-include { ANGSD_FST                                                                 } from './modules/angsd_fst.nf'
+include { ANGSD_FST, PLOT_SFS_SUMMARY                                               } from './modules/angsd_fst.nf'
 
 // Workflow 
 workflow {
@@ -192,5 +192,9 @@ workflow {
         .combine(PREPARE_SITE_SETS.out.snps_pruned_neutral_idx)
 
     // Execute FST calculation
-    ANGSD_FST(ch_fst_pairs, ch_pruned_neutral_bundle.first(), file("${projectDir}/scripts/plot_windowed_fst.R"))
+    ANGSD_FST(ch_fst_pairs, ch_pruned_neutral_bundle.first())
+
+    // Generate SFS comparison plot across all regions
+    PLOT_SFS_SUMMARY(ANGSD_FST.out.sfs_2d.collect())
+    )
 }

@@ -164,7 +164,7 @@ results/
 ├── selection/                 # ACER iterative selection scan outputs
 ├── PCAngsd/                   # Population structure (PCA & Admixture)
 ├── diversity/                 # Summary nucleotide diversity statistics and comparison plots
-├── fst/                       # Global FST values and Manhattan plots
+├── fst/                       # Global FST values, SFS plot, and Manhattan plots
 └── large_data/                # Large binary, intermediate, and site library files (Ignored by git)
     ├── sites/                 # Base coordinate indices, region mappings, and processed site libraries
     ├── beagle/                # Individual genotype likelihood matrices
@@ -210,6 +210,7 @@ Summary nucleotide diversity files calculated across all callable neutral loci (
 $F_{ST}$ metrics between historical and modern populations derived from LD-pruned neutral loci.
 * **`${region}_hist_vs_mod.global_fst.txt`**: Global unweighted and weighted $F_{ST}$ values, in that order.
 * **`${region}_fst_manhattan.png`**: Manhattan plot displaying genome-wide $F_{ST}$ sliding window calculations across chromosomes.
+* **`sfs_summary_neutral_snps.png`**: site frequency spectrum (SFS) plot of historical vs. modern allele frequencies. Useful for identifying bioinformatic problems (paralogs can appear as an excess of alleles at 50% frequency; jagged SFS are also suspect). Also useful for identifying a loss of low-frequency alleles through time, which can indicate a bottleneck.
 
 ---
 
