@@ -29,13 +29,15 @@ params.bam_q        = 25 // Mapping quality threshold.
 params.trimlength   = 85 // Default fallback trim length if no historical reads map successfully
 
 def resolve_reads = { String sample_id ->
-    def r1 = file("${params.indir}/${sample_id}_R1.fastq.gz")
-    def r2 = file("${params.indir}/${sample_id}_R2.fastq.gz")
+    // Search for R1 files with common extensions (.fastq.gz, .fq.gz, _001.fastq.gz, etc.)
+    def r1_files = file("${params.indir}/${sample_id}{_R1,_1}{,.fastq.gz,.fq.gz}").sort()
+    def r2_files = file("${params.indir}/${sample_id}{_R2,_2}{,.fastq.gz,.fq.gz}").sort()
 
-    if( !r1.exists() ) error "R1 file not found for ${sample_id}: ${r1}"
-    if( !r2.exists() ) error "R2 file not found for ${sample_id}: ${r2}"
+    // Validate that files were found
+    if (!r1_files) error "R1 file not found for ${sample_id} in ${params.indir}"
+    if (!r2_files) error "R2 file not found for ${sample_id} in ${params.indir}"
 
-    return [r1, r2]
+    return [r1_files[0], r2_files[0]]
 }
 
 def samplesheet_file = file(params.samplesheet)
