@@ -70,7 +70,7 @@ params.bed_file                 = "${projectDir}/data/reference/<reference>.repm
 
 // --- Pipeline Control & Logic Flags ---
 params.historical_era           = "historical" // String identifier used in the samplesheet era column
-params.historical_mapper        = "aln"        // Initial mapper choice for Pass 1 ("aln" or "mem")
+params.historical_mapper        = "mem"        // Initial mapper choice for Pass 1 ("aln" or "mem"). Mem is much faster. Aln is better for short reads <45 bp.
 params.run_repeatmasking        = true         // Set to false to bypass RepeatModeler/Masker and use params.bed_file
 params.run_historical_fastqc    = true         // Run FastQC on historical reads after fastp
 params.run_historical_mapdamage = true         // Run mapDamage assessment & base rescaling on historical BAMs
