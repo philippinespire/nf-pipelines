@@ -12,7 +12,8 @@ params.samples_file = "${projectDir}/inputfiles/fastq_filenames.txt" // Legacy w
 params.indir        = "${projectDir}/data/symlinks" // Directory where raw FASTQ files are expected.
 params.outdir       = "${projectDir}/results" // Directory where all output files will be written.
 params.reference    = "${projectDir}/data/reference/<reference>.fasta" // Path to reference genome FASTA file.
-params.bed_file     = "${projectDir}/data/reference/<reference>.repma.bed" // input bed file of repeats and CpG sites for downstream ANGSD analyses. Only used if params.run_repeatmasking is set to false.
+params.repeat_bed_file     = "${projectDir}/data/reference/<reference>.repma.bed" // input exclusion bed file of repeats and CpG sites for downstream ANGSD analyses. Only used if params.run_repeatmasking is set to false.
+params.exclude_bed  = null // Optional BED file for paralogs or other regions to exclude, eg, from nf-paralog output
 params.reference_prefix         = params.reference.tokenize('/').last().replaceAll(/\.(fa|fasta|fna)$/, '') // Extracts base name of reference.
 params.historical_era           = "historical"
 params.historical_mapper        = "mem" // Default starting point for historical read mapping ("aln" or "mem"). Mem is much faster. Aln is better for short reads <45 bp.
@@ -196,6 +197,33 @@ process REPEAT_MASKER {
 
     # Generate reference filter tracking indexes for downstream parsing (ANGSD/BCFtools)
     cut -f1 ${ref_fasta.baseName}.combined_mask.bed | uniq | awk '{print \$0 ":"}' > ${ref_fasta.baseName}.cleaned.regions
+    """
+}
+
+process COMBINE_BEDS {
+    tag "Combining mask & exclude BEDs"
+    label 'process_low'
+    publishDir "${params.outdir}/data/reference", mode: 'copy'
+
+    input:
+    path base_bed
+    path exclude_bed
+
+    output:
+    path "${params.reference_prefix}.combined_exclusions.bed", emit: merged_bed
+
+    script:
+    """
+    cat ${base_bed} ${exclude_bed} | sort -k1,1 -k2,2n > temp_sorted.bed
+
+    # Fast native custom merge line replacing bedtools merge
+    awk 'OFS="\\t" { \
+        if (NR==1) {chr=\$1; start=\$2; end=\$3; next} \
+        if (\$1==chr && \$2<=end) { if (\$3>end) end=\$3 } \
+        else { print chr, start, end; chr=\$1; start=\$2; end=\$3 } \
+    } END { if (NR>0) print chr, start, end }' temp_sorted.bed > ${params.reference_prefix}.combined_exclusions.bed
+
+    rm temp_sorted.bed
     """
 }
 
@@ -721,24 +749,37 @@ workflow {
     pass1_mapper_ch = Channel.value(params.historical_mapper)
 
     // 1. Conduct optional repeat modeling, repeat-masking and CpG site filtering on the reference genome
-    bed_ch = Channel.empty()
+    raw_mask_bed_ch = Channel.empty()
+
     if (params.run_repeatmasking) {
         // repeat modeling, masking, and CpG site extraction
         modeler_output = REPEAT_MODELER(fasta_ref_ch) // resource-intensive step, may require high RAM and CPU
         cpg_output     = EXTRACT_CPG(fasta_ref_ch)        
         masking_output = REPEAT_MASKER(fasta_ref_ch, modeler_output.model_library, cpg_output.cpg_bed)
-        bed_ch = masking_output.mask_bed 
-        regions_ch  = masking_output.regions // not used?
+        raw_mask_bed_ch = masking_output.mask_bed 
     } else {
         // Ensure the manual BED file exists before proceeding
-        bed_file_obj = file(params.bed_file)
+        bed_file_obj = file(params.repeat_bed_file)
         if ( !bed_file_obj.exists() ) {
-            error "params.run_repeatmasking is false, but the required manual BED file was not found at: ${params.bed_file}"
+            error "params.run_repeatmasking is false, but the required manual BED file was not found at: ${params.repeat_bed_file}"
         }
 
         // If repeatmasking is skipped, use the provided bed file for downstream analyses
-        bed_ch = Channel.fromPath(params.bed_file, checkIfExists: true).first()
+        raw_mask_bed_ch = Channel.fromPath(params.repeat_bed_file, checkIfExists: true).first()
     }
+
+    // Combine with optional paralog / custom exclusion BED file if specified
+    if (params.exclude_bed) {
+        exclude_file_obj = file(params.exclude_bed)
+        if ( !exclude_file_obj.exists() ) {
+            error "params.exclude_bed was specified, but file was not found at: ${params.exclude_bed}"
+        }
+        exclude_bed_ch = Channel.fromPath(params.exclude_bed, checkIfExists: true).first()
+        bed_ch = COMBINE_BEDS(raw_mask_bed_ch, exclude_bed_ch).merged_bed
+    } else {
+        bed_ch = raw_mask_bed_ch
+    }
+
     // then prepare the reference for downstream ANGSD analyses
     PREP_REFERENCE_REPEAT(fasta_ref_ch, ref_fai_ch, bed_ch)
 

@@ -5,7 +5,7 @@ This is a Nextflow DSL2 workflow designed for processing high-throughput sequenc
 
 The pipeline performs:
 
-* De novo repeat modeling, repeat masking, and CpG site identification on the reference genome.
+* De novo repeat modeling, repeat masking, and CpG site identification on the reference genome. Optionally adds this to an input file of paralogous or other regions to also mask (e.g., from nf-paralog).
 * Generation of clean site-index files for downstream ANGSD analyses.
 * Adapter trimming and overlapping read pair merging (fastp).
 * Initial mapping of historical samples to calculate average mapped read length.
@@ -38,7 +38,7 @@ cd ./nf-trim-merged-unmerged
 > **For WAHAB HPC** For nextflow to correctly install conda environments, a personal conda installation is necessary. Installation instruction for miniconda (my personal favorite) and how to use it can be found [here](https://www.anaconda.com/docs/getting-started/miniconda/main)
 
 ## Folder structure
-Before running, this is the setup:
+Before running, this is a typical setup:
 ```
 nf-trim-merged-unmerged/  
 ├── data/  
@@ -66,12 +66,13 @@ params.samples_file             = "${projectDir}/inputfiles/fastq_filenames.txt"
 params.indir                    = "${projectDir}/data/symlinks"                        // Directory where raw FASTQ files are expected.
 params.outdir                   = "${projectDir}/results"                              // Directory where all output files will be written.
 params.reference                = "${projectDir}/data/reference/<reference>.fasta"     // Path to reference genome FASTA file.
-params.bed_file                 = "${projectDir}/data/reference/<reference>.repma.bed" // Input bed file of repeats and CpG sites for downstream ANGSD analyses. Required if run_repeatmasking = false. Not used if run_repeatmasking = true.
+params.repeat_bed_file                 = "${projectDir}/data/reference/<reference>.repma.bed" // Input exclusion bed file of repeats and CpG sites for downstream ANGSD analyses. Required if run_repeatmasking = false. Not used if run_repeatmasking = true.
+params.exclude_bed              = null                                                 // Optional BED file for paralogs or other regions to exclude, eg, from nf-paralog output
 
 // --- Pipeline Control & Logic Flags ---
 params.historical_era           = "historical" // String identifier used in the samplesheet era column
 params.historical_mapper        = "mem"        // Initial mapper choice for Pass 1 ("aln" or "mem"). Mem is much faster. Aln is better for short reads <45 bp.
-params.run_repeatmasking        = true         // Set to false to bypass RepeatModeler/Masker and use params.bed_file
+params.run_repeatmasking        = true         // Set to false to bypass RepeatModeler/Masker and use params.repeat_bed_file
 params.run_historical_fastqc    = true         // Run FastQC on historical reads after fastp
 params.run_historical_mapdamage = true         // Run mapDamage assessment & base rescaling on historical BAMs
 params.run_historical_amber     = true         // Run AMBER quality evaluation on historical BAMs
@@ -227,7 +228,7 @@ To override parameters directly from the command line:
 nextflow run main.nf \
   --reference "./data/reference/my_genome.fasta" \
   --run_repeatmasking false \
-  --bed_file "./data/reference/my_repeats.bed" \
+  --repeat_bed_file "./data/reference/my_repeats.bed" \
   --historical_mapper "aln" \
   -profile wahab \
   -resume
