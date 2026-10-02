@@ -49,7 +49,8 @@ nf-trim-merged-unmerged/
 │   └── fastq_filenames.txt # Fallback single-column sample ID list (optional)
 ├── scripts/  
 │   ├── split_reads.sh     # Custom length splitting script for long, merged reads
-│   └── samremovedup.py    # Custom python script for duplicate removal  
+│   ├── samremovedup.py    # Custom python script for duplicate removal
+│   └── plot_qc_summary.R  # R script generating summary tables and QC plots  
 ├── main.nf                # Master workflow execution script
 ├── mapping_modules.nf     # Module definitions for BWA ALN/MEM mapping
 └── nextflow.config        # Process resource configs and cluster profiles
@@ -168,6 +169,8 @@ Mapped Length ≤ 80 bp                                Mapped Length > 80 bp
 4. BAM Post-Processing (Duplicate Removal -> GATK Indel Realignment -> Depth QC)
                                   │
 5. Downstream Evaluation (Optional mapDamage Rescaling & AMBER Reports)
+                                  │
+6. Global Summaries & Visualization (Aggregate Stats -> R Summary Plots & Master Table)
 ```
 
 1. Reference Masking & ANGSD Site Indexing:
@@ -253,7 +256,27 @@ results/
 ├── fastqc/              # FastQC reports (.html, .zip) for trimmed reads
 ├── mapdamage/           # mapDamage postmortem damage plots (.pdf) and statistic logs (.txt)
 └── stats/               # Calculated historical average read length (historical_trimlength.txt)
+│   ├── contig_depth_summary.tsv  # Mean sequencing depth broken down per contig
+│   └── individual/      # Per-sample metric breakdown lines
+└── summary_reports/     # Master summary tables and all publication-ready QC figures:
+    ├── individual_sequencing_summary_table.csv
+    ├── plot1_depth_by_individual_histogram.pdf
+    ├── plot2_depth_by_contig_histogram.pdf
+    ├── plot4_amber_read_length_distribution.pdf
+    ├── plot5_amber_mismatch_frequencies.pdf
+    └── plot6_mapdamage_overlay.pdf
 ```
+
+### Summary Reports & Plots
+
+The pipeline automatically generates a consolidated summary table and six diagnostic QC plots in `${params.outdir}/summary_reports/`:
+
+1. **`plot1_depth_by_individual_histogram.pdf`**: Histogram of average sequencing depth across all individuals, colored by era (historical vs. modern).
+2. **`plot2_depth_by_contig_histogram.pdf`**: Distribution of average coverage depth across all assembly contigs.
+3. **`individual_sequencing_summary_table.csv`**: Comprehensive per-sample metrics table including `total_seqs`, `total_mapped`, `total_uniq`, `total_MQ25`, `endogenous`, `complexity`, `grr`, `total_cov`, and read length metrics (`read_min`, `read_max`, `read_median`, `read_mean`).
+4. **`plot4_amber_read_length_distribution.pdf`**: AMBER overlay plot showing read length distributions (% reads vs. bp) per sample, grouped by era.
+5. **`plot5_amber_mismatch_frequencies.pdf`**: AMBER overlay plot of mismatch frequencies vs. distance from read ends, panelled by mutation type (`CpG to TpG`, `C to T`, and `Other`).
+6. **`plot6_mapdamage_overlay.pdf`**: mapDamage damage curves comparing historical vs. modern cohorts across 6 mutation categories (`C to T`, `G to A`, `Soft-clipped bases`, `Deletions`, `Insertions`, and `Other substitutions`).
 
 ## Software Stack
 The pipeline uses:
@@ -268,3 +291,4 @@ The pipeline uses:
 * mapDamage (v2.2) — Postmortem historical damage assessment and base-quality score rescaling.
 * AMBER (v2.0) — Target alignment quality extraction evaluations.
 * angsd (v0.94) — Multi-individual genotype processing database assembly.
+* R (v4.0+) — Summary metrics aggregation and automated visualization generation (ggplot2, dplyr, tidyr, readr).

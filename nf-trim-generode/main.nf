@@ -621,6 +621,114 @@ process AMBER {
     """
 }
 
+process CALCULATE_SAMPLE_STATS {
+    tag "$sample_id"
+    publishDir "${params.outdir}/stats/individual", mode: 'copy'
+
+    input:
+    tuple val(sample_id), val(era), path(bam), path(bai), path(fastp_json)
+    path bed_file
+
+    output:
+    path "${sample_id}.stats_line.tsv", emit: sample_stats
+
+    script:
+    """
+    # 1. Total Seqs extracted directly from fastp json report
+    total_seqs=\$(python3 -c "import json; data=json.load(open('${fastp_json}')); print(data['summary']['before_filtering']['total_reads'])" 2>/dev/null || echo "0")
+
+    # 2. Total Mapped, Unique, MQ25 Reads
+    total_mapped=\$(samtools view -c -F 4 ${bam})
+    total_uniq=\$(samtools view -c -F 1028 ${bam})
+    total_MQ25=\$(samtools view -c -q 25 ${bam})
+
+    # 3. Calculate Endogenous, Complexity, and GRR
+    endogenous=\$(awk -v m="\$total_mapped" -v s="\$total_seqs" 'BEGIN {if (s>0) printf "%.5f", m/s; else print "0"}')
+    complexity=\$(awk -v u="\$total_uniq" -v m="\$total_mapped" 'BEGIN {if (m>0) printf "%.5f", u/m; else print "0"}')
+    grr=\$(awk -v mq="\$total_MQ25" -v s="\$total_seqs" 'BEGIN {if (s>0) printf "%.5f", mq/s; else print "0"}')
+
+    # 4. Total Coverage across target BED
+    total_cov=\$(samtools depth -a -q 30 -Q 25 -b ${bed_file} ${bam} | awk '{sum+=\$3} END {if (NR>0) print sum/NR; else print "0"}')
+
+    # 5. Read length metrics (min, max, median, mean) replacing calculate.awk
+    read_stats=\$(samtools view -q 25 ${bam} | awk '{print length(\$10)}' | awk '
+        { sum+=\$1; nums[NR]=\$1 }
+        END {
+            if (NR == 0) { print "0 0 0 0"; exit }
+            asort(nums)
+            med = (NR % 2 == 0) ? (nums[NR/2] + nums[(NR/2)+1])/2 : nums[int(NR/2)+1]
+            print nums[1], nums[NR], med, sum/NR
+        }')
+
+    # Output formatted line with sample ID and era header
+    echo -e "${sample_id}\\t${era}\\t\${total_seqs}\\t\${total_mapped}\\t\${total_uniq}\\t\${total_MQ25}\\t\${endogenous}\\t\${complexity}\\t\${grr}\\t\${total_cov}\\t\${read_stats}" > ${sample_id}.stats_line.tsv
+    """
+}
+
+process CONTIG_DEPTH_QC {
+    tag "Genome Contig QC"
+    publishDir "${params.outdir}/stats", mode: 'copy'
+
+    input:
+    path bams
+    path bais
+    path bed_file
+
+    output:
+    path "contig_depth_summary.tsv", emit: contig_stats
+
+    script:
+    """
+    samtools depth -a -q 30 -Q 25 -b ${bed_file} ${bams} | awk '
+        {
+            sum[\$1] += \$3
+            count[\$1]++
+        }
+        END {
+            for (c in sum) {
+                print c "\t" (count[c] > 0 ? sum[c]/count[c] : 0)
+            }
+        }' > contig_depth_summary.tsv
+    """
+}
+
+process GENERATE_QC_REPORTS_AND_PLOTS {
+    tag "Generate Summary Reports"
+    label 'process_low'
+    publishDir "${params.outdir}/summary_reports", mode: 'copy'
+
+    input:
+    path stats_files
+    path contig_stats
+    path amber_files
+    path mapdamage_files
+
+    output:
+    path "individual_sequencing_summary_table.csv"
+    path "*.pdf"
+
+    script:
+    def rcmd = task.ext.rscript ?: 'Rscript' // allow nextflow.config to override Rscript path if needed (eg, with crun Rscript)
+    """
+    # 1. Header row for master sequencing stats table
+    echo -e "sample\tera\ttotal_seqs\ttotal_mapped\ttotal_uniq\ttotal_MQ25\tendogenous\tcomplexity\tgrr\ttotal_cov\tread_min\tread_max\tread_median\tread_mean" > master_sequencing_stats.tsv
+    cat ${stats_files} >> master_sequencing_stats.tsv
+
+    # 2. Stage AMBER and mapDamage output directories
+    mkdir -p amber_dir mapd_dir
+    cp ${amber_files} amber_dir/ 2>/dev/null || true
+    cp ${mapdamage_files} mapd_dir/ 2>/dev/null || true
+
+    # 3. Execute R Visualization pipeline
+    ${rcmd} ${projectDir}/scripts/plot_qc_summary.R \
+        master_sequencing_stats.tsv \
+        ${contig_stats} \
+        amber_dir \
+        mapd_dir \
+        .
+    """
+}
+
 workflow MODERN_PIPELINE {
     // this takes raw reads as input
     take:
@@ -848,4 +956,45 @@ workflow {
     // 7. Sub-pipelines execution to produce indexed bams and optional rescaled bams for historical samples
     modern_pipeline = MODERN_PIPELINE(modern_samples_ch, trim_length_ch, mapper_ch, ref_bundle_ch, bed_ch)
     historical_pipeline = HISTORICAL_PIPELINE(final_hist_bwa_merged, final_hist_bwa_unmerged, ref_bundle_ch, trim_length_ch, bed_ch)
+
+    // ------------------------------------------------------------------
+    // Aggregate QC, Metrics & Plot Generation
+    // ------------------------------------------------------------------
+    
+    // Channel preparation for all BAMs and their associated FASTP metadata
+    all_bams_ch = modern_pipeline.indexed.map { id, bam, bai -> tuple(id, 'modern', bam, bai) }
+        .mix(historical_pipeline.indexed.map { id, bam, bai -> tuple(id, 'historical', bam, bai) })
+
+    // Link fastp JSON stats files back to samples
+    fastp_jsons_ch = FASTP_MERGED.out[2].map { json -> tuple(json.baseName.replaceAll(/_fastp_report/, ''), json) }
+
+    sample_qc_input_ch = all_bams_ch
+        .map { id, era, bam, bai -> tuple(id, era, bam, bai) }
+        .join(fastp_jsons_ch) // tuple(sample_id, era, bam, bai, fastp_json)
+
+    // Calculate individual stats
+    indiv_stats_ch = CALCULATE_SAMPLE_STATS(sample_qc_input_ch, bed_ch)
+
+    // Calculate contig depth stats
+    all_bam_files = all_bams_ch.map { id, era, bam, bai -> bam }.collect()
+    all_bai_files = all_bams_ch.map { id, era, bam, bai -> bai }.collect()
+    contig_stats_ch = CONTIG_DEPTH_QC(all_bam_files, all_bai_files, bed_ch)
+
+    // Gather all AMBER and MapDamage output stats files
+    amber_stats_ch = Channel.empty()
+        .mix(params.run_modern_amber ? AMBER.out.map { id, pdf, txt -> txt } : Channel.empty())
+        .mix(params.run_historical_amber ? AMBER.out.map { id, pdf, txt -> txt } : Channel.empty())
+        .collect()
+
+    mapdamage_stats_ch = params.run_historical_mapdamage ? 
+        MAPDAMAGE.out.stats.collect() : Channel.empty().collect()
+
+    // Generate final plots and summary tables
+    GENERATE_QC_REPORTS_AND_PLOTS(
+        indiv_stats_ch.collect(),
+        contig_stats_ch,
+        amber_stats_ch,
+        mapdamage_stats_ch
+    )
+
 }
