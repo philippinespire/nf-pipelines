@@ -13,6 +13,7 @@ The pipeline performs:
 * Read trimming/splitting of modern reads down to historical read lengths to eliminate temporal length bias.
 * Conditional re-mapping for historical samples if the optimal mapper differs from the first mapping.
 * Custom duplicate removal, GATK Indel Realignment, depth statistics calculation, and optional FastQC, AMBER alignment evaluation, and mapDamage base quality rescaling.
+* Generation of quality control plots and statistics (see Output below).
 
 The pipeline is configured to run on Old Dominion University's WAHAB cluster using Nextflow DSL2 and Slurm/Conda execution profiles.
 
@@ -277,6 +278,8 @@ The pipeline automatically generates a consolidated summary table and six diagno
 4. **`plot4_amber_read_length_distribution.pdf`**: AMBER overlay plot showing read length distributions (% reads vs. bp) per sample, grouped by era.
 5. **`plot5_amber_mismatch_frequencies.pdf`**: AMBER overlay plot of mismatch frequencies vs. distance from read ends, panelled by mutation type (`CpG to TpG`, `C to T`, and `Other`).
 6. **`plot6_mapdamage_overlay.pdf`**: mapDamage damage curves comparing historical vs. modern cohorts across 6 mutation categories (`C to T`, `G to A`, `Soft-clipped bases`, `Deletions`, `Insertions`, and `Other substitutions`).
+
+The histograms of depth can be useful. Very low depth individuals (perhaps <1x) may constrain the callable fraction of the genome in the `nf-angsd-selection` pipeline, and we recommend considering them for removal. Contigs with substantially lower or higher depth than the rest could indicate contamination, mtDNA, or repetitive regions. The AMBER and MAPDAMAGE summary plots help to identify historical DNA damage patterns.
 
 ## Software Stack
 The pipeline uses:
