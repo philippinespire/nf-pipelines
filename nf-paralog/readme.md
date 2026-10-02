@@ -22,8 +22,7 @@ This GitHub repository also contains other nextflow pipelines.
 **Important for WAHAB HPC** For nextflow to correctly install conda environments, a personal conda installation is necessary. Installation instruction for miniconda (my personal favorite) and how to use it can be found [here](https://www.anaconda.com/docs/getting-started/miniconda/main)
 
 If you run dupHMM (an optional step in this pipeline), you will need to install expm, truncnorm, and docopt packages in your home directory on Wahab, since the base R installation on R doesn't have them. The pipeline expects them specficially in `~/.R/library`:
-```
-bash
+```bash
 module load container_env R
 mkdir -p ~/.R/library
 crun Rscript -e '
@@ -93,8 +92,8 @@ Make sure that all fastq file names are unique and follow this structure. Otherw
 This could be, for example, `inputfiles/samplesheet.csv`
 ```
 sample,era
-TzoCMta031_1_22CVWFLT3,historical
-CviAPal001_Ex1_L4,modern
+CviAPal031_Ex1_L4,historical
+CviCPal001_Ex1_L4,modern
 ```
 
 ### Configuration
@@ -106,7 +105,7 @@ In the `main.nf` file, adjust the parameters to fit your project:
 params.samplesheet = "${projectDir}/inputfiles/samplesheet.csv" // This is the preferred way to provide sample metadata, including sample IDs and eras (modern or historical)
 params.indir        = "${projectDir}/data/symlinks" // This is the directory where the raw FASTQ files are expected to be located. The pipeline will look for files named <sample_id>_R1.fastq.gz and <sample_id>_R2.fastq.gz in this directory.
 params.outdir       = "${projectDir}/results" // This is the directory where all output files will be written. The pipeline will create subdirectories for different types of output (e.g., fastq, bam, stats).
-params.reference    = "${projectDir}/data/reference/<reference>.fasta" // This is the path to the reference genome FASTA file that will be used for read mapping. The <reference> placeholder should be replaced with the actual reference name (e.g., hg19, mm10).
+params.reference    = "${projectDir}/data/reference/<reference>.fna" // This is the path to the reference genome FASTA file that will be used for read mapping. The <reference> placeholder should be replaced with the actual reference name (e.g., hg19, mm10).
 params.modern_era   = "modern"  // label in the "era" column of the samplesheet that identifies modern individuals
 params.min_ind_ratio = 0.5      // Require coverage in at least 50% of samples
 params.high_depth_quantile = 0.995 // target high depth percentile cutoff for flagging problematic high depth regions
@@ -173,6 +172,7 @@ results/
 │   └── <sample>_fastp_report.json
 ├── paralogs/
 │   ├── ngsparalog_duphmm_regions.bed
+│   ├── ngsparalog_duphmm_regions.filtered.bed
 │   ├── ngsparalog_sites.bed
 │   └── ngsparalog_threshold.txt
 ├── plots/
@@ -185,20 +185,20 @@ results/
 │   └── paralog_filter_overlaps.png
 └── large_data/
     ├── angsd/
-    │   ├── cvi_angsd.arg
-    │   ├── cvi_angsd.counts.gz
-    │   ├── cvi_angsd.depthGlobal
-    │   ├── cvi_angsd.depthSample
-    │   ├── cvi_angsd.geno.gz
-    │   ├── cvi_angsd.hwe.gz
-    │   ├── cvi_angsd.mafs.gz
-    │   └── cvi_angsd.pos.gz
+    │   ├── angsd.arg
+    │   ├── angsd.counts.gz
+    │   ├── angsd.depthGlobal
+    │   ├── angsd.depthSample
+    │   ├── angsd.geno.gz
+    │   ├── angsd.hwe.gz
+    │   ├── angsd.mafs.gz
+    │   └── angsd.pos.gz
     ├── bam/
     │   ├── <sample>.merged.realn.bam
     │   └── <sample>.merged.realn.bam.bai
     ├── paralogs/
-    │   ├── cvi_avg_depth.tsv
-    │   └── cvi_ngsparalog.lr.txt
+    │   ├── avg_depth.tsv
+    │   └── ngsparalog.lr.txt
     └── stats/
         └── site_allele_balance.tsv
 
@@ -226,8 +226,8 @@ results/
 
 * **`large_data/bam/`**: Final processed alignments for modern samples. These BAMs include merged single-end and unmerged paired-end reads mapped without MAPQ filtering ($q=0$), marked for duplicates, merged by sample ID, and realigned around indels.
 * **`large_data/angsd/`**: Unfiltered, raw calculation files output by ANGSD, including compressed Hardy-Weinberg test scores (`.hwe.gz`), major/minor allele frequencies (`.mafs.gz`), sample/global depth distributions (`.depthSample`, `.depthGlobal`), and base counts (`.counts.gz`).
-* **`large_data/paralogs/cvi_ngsparalog.lr.txt`**: The unfiltered likelihood-ratio table aggregated across all contigs/scaffolds from `ngsParalog calcLR`.
-* **`large_data/paralogs/cvi_avg_depth.tsv`**: Per-site average depth matching the `cvi_ngsparalog.lr.txt` site list (only generated when `params.duphmm_emit = 1`).
+* **`large_data/paralogs/ngsparalog.lr.txt`**: The unfiltered likelihood-ratio table aggregated across all contigs/scaffolds from `ngsParalog calcLR`.
+* **`large_data/paralogs/avg_depth.tsv`**: Per-site average depth matching the `ngsparalog.lr.txt` site list (only generated when `params.duphmm_emit = 1`).
 * **`large_data/stats/site_allele_balance.tsv`**: Per-site probabilistic allele balance and proportion of heterozygous individuals derived from ANGSD posterior probabilities.
 
 ## Software Stack
@@ -238,6 +238,7 @@ The pipeline uses:
 
 * `bwa` (`bwa-mem`): Reference genome read mapping.
 * `samtools`: Alignment sorting, indexing, merging, coordinate collation, markdup, faidx indexing, and mpileup generation.
+* `bedtools` (`v2.30.0+`): Genomic interval manipulation (sorting and merging dupHMM bed regions).
 * `GATK 3.x` (`GenomeAnalysisTK.jar`): Indel target identification (`RealignerTargetCreator`) and local realignment (`IndelRealigner`).
 * `ANGSD`: Hardy-Weinberg Equilibrium (`-doHWE`), major/minor allele frequency estimation (`-doMaf`), depth calculations, and allele counting.
 * `ngsParalog`: Likelihood-ratio calculations (`calcLR`) across mpileups to identify duplicated/paralogous regions.
