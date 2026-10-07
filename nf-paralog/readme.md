@@ -89,7 +89,7 @@ ln -s /Generode/reference/<reference>.fasta.* ./data/reference/
 Make sure that all fastq file names are unique and follow this structure. Otherwise the pipeline will fail.
 
 ### Sample CSV Structure Example 
-This could be, for example, `inputfiles/samplesheet.csv`
+This could be, for example, `inputfiles/samplesheet.csv`. The sample column must match the fastq file prefix up to `_R1.fastq.gz`.
 ```
 sample,era
 CviAPal031_Ex1_L4,historical
@@ -113,6 +113,7 @@ params.lr_quantile  = 0.999     // Target percentile cutoff for ngsParalog log-l
 params.hwe_pval    = 1e-3  // Target p-value threshold for HWE excess heterozygosity filtering
 params.rmdup_script = "${projectDir}/scripts/samremovedup.py"
 params.ngsparalog_bin = "/archive/carpenterlab/pire/softwares/ngsParalog/ngsParalog"  // path to ngsParalog binary
+params.gatk_jar = "/usr/GenomeAnalysisTK.jar" // path to GATK
 params.run_duphmm   = true      // Toggle dupHMM execution
 params.duphmm_script = "/archive/carpenterlab/pire/softwares/ngsParalog/dupHMM.R"     // Path to dupHMM.R
 params.duphmm_emit  = 1         // 0 = LR only, 1 = both LR and Coverage. Latter is recommended.
