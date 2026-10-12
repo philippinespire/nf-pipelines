@@ -107,7 +107,7 @@ params.indir        = "${projectDir}/data/symlinks" // This is the directory whe
 params.outdir       = "${projectDir}/results" // This is the directory where all output files will be written. The pipeline will create subdirectories for different types of output (e.g., fastq, bam, stats).
 params.reference    = "${projectDir}/data/reference/<reference>.fna" // This is the path to the reference genome FASTA file that will be used for read mapping. The <reference> placeholder should be replaced with the actual reference name (e.g., hg19, mm10).
 params.modern_era   = "modern"  // label in the "era" column of the samplesheet that identifies modern individuals
-params.min_ind_ratio = 0.5      // Require coverage in at least 50% of samples
+params.min_ind_ratio = 0.5      // Require coverage in at least X% of samples
 params.high_depth_quantile = 0.995 // target high depth percentile cutoff for flagging problematic high depth regions
 params.lr_quantile  = 0.999     // Target percentile cutoff for ngsParalog log-likelihood values (e.g., 0.999 = top 0.1% highest LR sites)
 params.hwe_pval    = 1e-3  // Target p-value threshold for HWE excess heterozygosity filtering

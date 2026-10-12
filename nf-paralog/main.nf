@@ -12,7 +12,7 @@ params.outdir       = "${projectDir}/results" // Directory where all output file
 params.reference    = "${projectDir}/data/reference/<reference>.fna" // Path to reference genome FASTA file.
 params.reference_prefix = params.reference.tokenize('/').last().replaceAll(/\.(fa|fasta|fna)$/, '') // Extracts base name of reference.
 params.modern_era   = "modern" // label in the "era" column of the samplesheet that identifies modern individuals
-params.min_ind_ratio = 0.5 // Require coverage in at least 50% of samples
+params.min_ind_ratio = 0.5 // Require coverage in at least X% of samples
 params.high_depth_quantile = 0.995 // target high depth percentile cutoff
 params.lr_quantile = 0.999  // Target percentile cutoff for ngsParalog likelihood ratio (e.g., 0.999 = top 0.1% highest LR sites)
 params.hwe_pval    = 1e-3  // Target p-value threshold for HWE excess heterozygosity filtering
@@ -250,7 +250,7 @@ process ANGSD_HWE_DEPTH {
 
     script:
     def num_bams = bams instanceof List ? bams.size() : 1
-    def min_ind  = Math.max(1, Math.floor(num_bams * params.min_ind_ratio) as int)
+    def min_ind  = Math.max(1, Math.ceil(num_bams * params.min_ind_ratio) as int)
 
     // 1. Logs min_ind to .nextflow.log
     log.info "[ANGSD_HWE_DEPTH] Total BAMs: ${num_bams} | Calculated minInd: ${min_ind}"
