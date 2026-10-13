@@ -40,3 +40,6 @@ conda_cache/
 !nf-angsd-selection/results/
 # Ignore large_data inside the un-ignored results folder
 nf-angsd-selection/results/large_data/
+
+# Special handling for nf-trim-generode input (small files)
+!nf-trim-generode/inputfiles/*.csv
