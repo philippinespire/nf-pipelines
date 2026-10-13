@@ -48,6 +48,8 @@ Important:
 
 If you want to use mapdamage-rescaled BAM files for historical samples (eg, from Generode or nf-trim-generode), point to those files in this input file.
 
+Think carefully about which individuals to use. It may be useful to remove very low-depth individuals (e.g., <1x or <0.5x) based, for example, on `results/summary_reports/plot1_depth_by_individual_histogram.pdf` from `nf-trim-generode`. If low-depth individuals are included, consider reducing `min_ind_frac` so that lots of loci are not removed.
+
 
 ### BED file
 The ANGSD-style BED file contains information on the sites that will be analyzed. We will use this file to remove repeat regions from the analysis. This files corresponds to the `-sites` flag in [ANGSD](https://www.popgen.dk/angsd/index.php/Sites).
@@ -61,6 +63,9 @@ awk '{print $1"\t"$2+1"\t"$3}' ./path/to/reference/reference.repma.bed > ./path/
 
 angsd sites index ./path/to/reference/reference.repma.angsd.txt
 ```
+
+Think carefully about which contigs to use. It may be useful to remove very low-depth or high-depth contigs based, for example, on `results/summary_reports/plot2_depth_by_contig_histogram.pdf` from `nf-trim-generode`. These could be mtDNA, paralogs, or not from the target species.
+
 
 ### Contig file
 Specify the contigs/regions for which to run the pipeline. One contig/region per line. This corresponds to the `-r` flag in [ANGSD](https://www.popgen.dk/angsd/index.php/Input). The pipeline will submit a job per contig/region.
