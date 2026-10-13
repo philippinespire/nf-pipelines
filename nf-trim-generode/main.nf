@@ -597,8 +597,8 @@ process AMBER_PREP {
     script:
     """
     # Adding MD tags and filtering for MQ25
-    samtools calmd -b ${bam} ${ref_bundle[0]} > ${sample_name}.tags.bam
-    samtools view -bq 25 ${sample_name}.tags.bam > ${sample_name}.tags.MQ25.bam
+    samtools calmd -@ ${task.cpus} -b ${bam} ${ref_bundle[0]} > ${sample_name}.tags.bam
+    samtools view -@ ${task.cpus} -bq 25 ${sample_name}.tags.bam > ${sample_name}.tags.MQ25.bam
 
     # Create input file for AMBER
     echo -e "${sample_name}\\t${sample_name}.tags.MQ25.bam" > amber_input.txt
