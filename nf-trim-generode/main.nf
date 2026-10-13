@@ -294,8 +294,8 @@ process FASTP_MERGED {
     output:
     tuple val(sample_id), path("${sample_id}_trimmed_merged.fastq.gz"), emit: merged
     tuple val(sample_id), path("${sample_id}_R1_unmerged.fq.gz"), path("${sample_id}_R2_unmerged.fq.gz"), emit: unmerged
-    path "*.json"
-    path "*.html"
+    path "*.json", emit: json
+    path "*.html", emit: html
 
     script:
     """
@@ -781,13 +781,17 @@ workflow MODERN_PIPELINE {
     BAM_QC(modern_indexed, trim_length_ch, bed_ch)
 
     // 10. Optional AMBER analysis
+    amber_out = Channel.empty()
     if (params.run_modern_amber) {
         AMBER_PREP(modern_indexed, ref_bundle_ch)
         AMBER(AMBER_PREP.out)
+        amber_out = AMBER.out.map { id, pdf, txt -> txt }
     }
 
     emit:
-    indexed = modern_indexed
+    indexed    = modern_indexed
+    fastp_json = modern_fastp.json
+    amber      = amber_out
 }
 
 workflow HISTORICAL_PIPELINE {
@@ -820,20 +824,26 @@ workflow HISTORICAL_PIPELINE {
 
     // 4. Optional MapDamage rescaling
     historical_rescaled = Channel.empty()
+    mapdamage_stats_out = Channel.empty()
     if (params.run_historical_mapdamage) {
         historical_mapdamage = MAPDAMAGE(historical_indexed, ref_bundle_ch)
         historical_rescaled = historical_mapdamage.rescaled_indexed
+        mapdamage_stats_out = historical_mapdamage.stats
     }
 
     // 5. Optional AMBER analysis
+    amber_out = Channel.empty()
     if (params.run_historical_amber) {
         AMBER_PREP(historical_indexed, ref_bundle_ch)
         AMBER(AMBER_PREP.out)
+        amber_out = AMBER.out.map { id, pdf, txt -> txt }
     }
 
     emit:
     indexed = historical_indexed
     rescaled = historical_rescaled
+    amber           = amber_out
+    mapdamage_stats = mapdamage_stats_out
 }
 
 workflow {
@@ -966,7 +976,9 @@ workflow {
         .mix(historical_pipeline.indexed.map { id, bam, bai -> tuple(id, 'historical', bam, bai) })
 
     // Link fastp JSON stats files back to samples
-    fastp_jsons_ch = FASTP_MERGED.out[2].map { json -> tuple(json.baseName.replaceAll(/_fastp_report/, ''), json) }
+    fastp_jsons_ch = historical_fastp.json
+        .mix(modern_pipeline.fastp_json)
+        .map { json -> tuple(json.baseName.replaceAll(/_fastp_report/, ''), json) }
 
     sample_qc_input_ch = all_bams_ch
         .map { id, era, bam, bai -> tuple(id, era, bam, bai) }
@@ -981,13 +993,11 @@ workflow {
     contig_stats_ch = CONTIG_DEPTH_QC(all_bam_files, all_bai_files, bed_ch)
 
     // Gather all AMBER and MapDamage output stats files
-    amber_stats_ch = Channel.empty()
-        .mix(params.run_modern_amber ? AMBER.out.map { id, pdf, txt -> txt } : Channel.empty())
-        .mix(params.run_historical_amber ? AMBER.out.map { id, pdf, txt -> txt } : Channel.empty())
+    amber_stats_ch = modern_pipeline.amber
+        .mix(historical_pipeline.amber)
         .collect()
 
-    mapdamage_stats_ch = params.run_historical_mapdamage ? 
-        MAPDAMAGE.out.stats.collect() : Channel.empty().collect()
+    mapdamage_stats_ch = historical_pipeline.mapdamage_stats.collect()
 
     // Generate final plots and summary tables
     GENERATE_QC_REPORTS_AND_PLOTS(

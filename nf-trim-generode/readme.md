@@ -11,7 +11,7 @@ The pipeline performs:
 * Initial mapping of historical samples to calculate average mapped read length.
 * Automated mapper selection (bwa aln vs bwa mem) based on empirical historical read lengths.
 * Read trimming/splitting of modern reads down to historical read lengths to eliminate temporal length bias.
-* Conditional re-mapping for historical samples if the optimal mapper differs from the first mapping.
+* Mapping of modern reads and conditional re-mapping for historical samples if the optimal mapper differs from the first mapping. Only primary alignments are kept (-F 2308).
 * Custom duplicate removal, GATK Indel Realignment, depth statistics calculation, and optional FastQC, AMBER alignment evaluation, and mapDamage base quality rescaling.
 * Generation of quality control plots and statistics (see Output below).
 
