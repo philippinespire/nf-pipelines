@@ -188,12 +188,16 @@ process BWA_MERGED {
 	def name = fields[0]
     def lib  = fields.size() > 1 ? fields[1] : 'lib1'
     def rg   = fields.size() > 2 ? fields[2] : sample_id
+
+    // Reserve 75% of task memory for samtools sort, split evenly across CPUs
+    // Convert to megabytes for samtools sort -m <MB>M
+    def sort_mem_mb = Math.max(768, ((task.memory.toMega() * 0.75) / task.cpus) as int)
     
     """
     bwa mem -R "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
         -t ${task.cpus} ${reference_bundle[0]} ${merged_fq} \
         | samtools view -q 0 -F 1028 -@ ${task.cpus} -bSh - \
-        | samtools sort -m 4G -o ${sample_id}_trimmed_merged.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
+        | samtools sort -m ${sort_mem_mb}M -o ${sample_id}_trimmed_merged.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
     """
 
 }
@@ -215,11 +219,15 @@ process BWA_UNMERGED {
     def lib  = fields.size() > 1 ? fields[1] : 'lib1'
     def rg   = fields.size() > 2 ? fields[2] : sample_id
 
+    // Reserve 75% of task memory for samtools sort, split evenly across CPUs
+    // Convert to megabytes for samtools sort -m <MB>M
+    def sort_mem_mb = Math.max(768, ((task.memory.toMega() * 0.75) / task.cpus) as int)
+
 	"""
     bwa mem -R "@RG\\tID:${rg}\\tSM:${name}\\tPL:ILLUMINA\\tLB:${name}_${lib}\\tPU:${rg}" \
         -t ${task.cpus} ${reference_bundle[0]} ${r1} ${r2} \
         | samtools view -q 0 -F 1028 -@ ${task.cpus} -bSh - \
-        | samtools sort -m 4G -o ${sample_id}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
+        | samtools sort -m ${sort_mem_mb}M -o ${sample_id}.sorted.bam -T ${sample_id}.sorting -@ ${task.cpus} -
     """
 }
 
