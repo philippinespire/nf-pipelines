@@ -29,7 +29,8 @@ params.bwa_threads  = 4
 params.bam_q        = 25 // Mapping quality threshold. 
 params.trimlength   = 85 // Default fallback trim length if no historical reads map successfully
 
-def resolve_reads = { String sample_id ->
+// Helper function
+def resolve_reads(String sample_id) {
     // Search for R1 files with common extensions (.fastq.gz, .fq.gz, _001.fastq.gz, etc.)
     def r1_files = file("${params.indir}/${sample_id}{_R1,_1}{,.fastq.gz,.fq.gz}").sort()
     def r2_files = file("${params.indir}/${sample_id}{_R2,_2}{,.fastq.gz,.fq.gz}").sort()
@@ -41,39 +42,8 @@ def resolve_reads = { String sample_id ->
     return [r1_files[0], r2_files[0]]
 }
 
-def samplesheet_file = file(params.samplesheet)
-def legacy_samples_file = file(params.samples_file)
-
-// --- Input Channels ---
-// Sample metadata is taken from a CSV when available.
-// Fallback: legacy one-column sample list, which defaults all samples to modern.
-sample_metadata_ch = samplesheet_file.exists() ?
-    Channel
-        .fromPath(samplesheet_file, checkIfExists: true)
-        .splitCsv(header: true)
-        .map { row -> tuple(row.sample.trim(), row.era?.trim()?.toLowerCase() ?: 'modern') }
-        .filter { sample_id, era -> sample_id }
-    :
-    Channel
-        .fromPath(legacy_samples_file, checkIfExists: true)
-        .splitText()
-        .map { it.trim() }
-        .filter { it.length() > 0 }
-        .map { sample_id -> tuple(sample_id, 'modern') }
-
-modern_samples_ch = sample_metadata_ch
-    .filter { sample_id, era -> era != params.historical_era }
-    .map { sample_id, era -> tuple(sample_id, resolve_reads(sample_id)) }
-
-historical_samples_ch = sample_metadata_ch
-    .filter { sample_id, era -> era == params.historical_era }
-    .map { sample_id, era ->
-        def reads = resolve_reads(sample_id)
-        tuple(sample_id, reads[0], reads[1])
-    }
 
 // --- Processes ---
-
 process REPEAT_MODELER {
     tag "De novo repeat discovery on ${ref_fasta.baseName}"
     label 'process_high' // Modeler usually requires significantly more RAM/CPU
@@ -847,6 +817,37 @@ workflow HISTORICAL_PIPELINE {
 }
 
 workflow {
+    def samplesheet_file = file(params.samplesheet)
+    def legacy_samples_file = file(params.samples_file)
+
+    // --- Input Channels ---
+    // Sample metadata is taken from a CSV when available.
+    // Fallback: legacy one-column sample list, which defaults all samples to modern.
+    sample_metadata_ch = samplesheet_file.exists() ?
+        Channel
+            .fromPath(samplesheet_file, checkIfExists: true)
+            .splitCsv(header: true)
+            .map { row -> tuple(row.sample.trim(), row.era?.trim()?.toLowerCase() ?: 'modern') }
+            .filter { sample_id, era -> sample_id }
+        :
+        Channel
+            .fromPath(legacy_samples_file, checkIfExists: true)
+            .splitText()
+            .map { it.trim() }
+            .filter { it.length() > 0 }
+            .map { sample_id -> tuple(sample_id, 'modern') }
+
+    modern_samples_ch = sample_metadata_ch
+        .filter { sample_id, era -> era != params.historical_era }
+        .map { sample_id, era -> tuple(sample_id, resolve_reads(sample_id)) }
+
+    historical_samples_ch = sample_metadata_ch
+        .filter { sample_id, era -> era == params.historical_era }
+        .map { sample_id, era ->
+            def reads = resolve_reads(sample_id)
+            tuple(sample_id, reads[0], reads[1])
+        }
+
     // Package the reference files into a channel
     ref_bundle_ch = Channel.fromPath( "${params.reference}*" )
         .mix( Channel.fromPath( params.reference.replaceAll(/\.(fa|fasta|fna)$/, '.dict'), checkIfExists: false ) )
