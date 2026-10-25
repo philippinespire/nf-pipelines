@@ -142,8 +142,8 @@ tmux a -t nextflow
 Then start the nextflow pipeline as follows (while in tmux):
 
 ```bash
-# Load the nextflow module
-module load container_env nextflow
+# Load the nextflow module (version 23)
+module load container_env nextflow/23.10.1
 
 # Activate bash
 bash
