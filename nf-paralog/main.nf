@@ -23,8 +23,10 @@ params.run_duphmm    = true          // Toggle dupHMM execution
 params.duphmm_script = "/archive/carpenterlab/pire/softwares/ngsParalog/dupHMM.R"     // Path to dupHMM.R (or place inside pipeline bin/)
 params.duphmm_emit   = 1              // 0 = LR only, 1 = both LR and Coverage
 params.duphmm_penalty    = "BIC"  // Options: "BIC", "AIC", or "none". BIC and AIC make it less likely that dupHMM will identify paralogous regions. Useful if it is too sensitive.
-params.duphmm_merge_dist = -1  // Maximum distance (bp) between regions to merge in output from dupHMM. -1 will merge only overlapping regions
+params.dupcovmin = 0  // Minimum coverage density bound for duplication HMM [default 0]. Increase if dupHMM produces an error that all duplicated coverage emission probabilities are zero.
+params.duphmm_merge_dist = -1  // Maximum distance (bp) between regions to merge in output from dupHMM
 params.duphmm_min_len    = 1  // Minimum length (bp) threshold for retained regions in output from dupHMM
+params.mask_window   = 1000  // Distance (bp) to extend masking in both directions around identified paralogous regions/SNPs
 
 // --- Helper Functions ---
 def resolve_reads(String sample_id) {
@@ -660,6 +662,8 @@ process DUPHMM_INFER {
     def cov_arg = (params.duphmm_emit == 1 && scaff_cov.name != 'NO_COV') ? "--covfile=${scaff_cov}" : "" // Only pass --covfile if emit 1 is active and a coverage file exists
     def rcmd = task.ext.rscript ?: 'Rscript' // allow nextflow.config to override Rscript path if needed (eg, with crun Rscript)
     """
+    # Only run dupHMM if there are >20 sites in the scaffold to make inference meaningful
+    # Generate an empty .rf file if the scaffold is too small to avoid downstream errors
     if [ \$(wc -l < ${scaff_lr}) -gt 20 ]; then
         ${rcmd} ${params.duphmm_script} \
             --lrfile=${scaff_lr} \
@@ -668,7 +672,10 @@ process DUPHMM_INFER {
             --penalty ${params.duphmm_penalty} \
             --n=${num_samples} \
             --paramfile=${param_file} \
-            --outfile="${scaff}_duphmm"
+            --dupcovmin=${params.dupcovmin} \
+            --outfile="${scaff}_duphmm" || touch "${scaff}_duphmm.rf"
+    else
+        touch "${scaff}_duphmm.rf"
     fi
     """
 }
@@ -720,6 +727,43 @@ process FILTER_DUPHMM_REGIONS {
         | ${bedtools} merge -d ${params.duphmm_merge_dist} -i stdin \
         | awk 'BEGIN {OFS="\\t"} (\$3 - \$2) >= ${params.duphmm_min_len}' \
         > ngsparalog_duphmm_regions.filtered.bed
+    """
+}
+
+// Pad the paralog regions by a user-defined number of bases to ensure that any flanking regions potentially affected by paralogy are also excluded from downstream analyses.
+process PAD_PARALOG_REGIONS {
+    tag "Pad_Paralogs"
+    publishDir "${params.outdir}/paralogs", mode: 'copy'
+
+    input:
+    path input_bed
+    path ref_bundle
+
+    output:
+    path "${input_bed.baseName}.padded.bed", emit: bed
+
+    script:
+    def bedtools = task.ext.bedtools_cmd ?: 'bedtools'
+    """
+    # Ensure reference index (.fai) exists to provide chromosome bounds for bedtools slop
+    if [ ! -f *.fai ]; then
+        samtools faidx ${ref_bundle[0]}
+    fi
+    fai_file=\$(ls *.fai | head -n 1)
+
+    if [ "${params.mask_window}" -gt 0 ]; then
+        # Check if input_bed is empty to prevent bedtools errors
+        if [ -s "${input_bed}" ]; then
+            ${bedtools} slop -i ${input_bed} -g \$fai_file -b ${params.mask_window} \\
+                | ${bedtools} sort -i stdin \\
+                | ${bedtools} merge -i stdin \\
+                > ${input_bed.baseName}.padded.bed
+        else
+            touch ${input_bed.baseName}.padded.bed
+        fi
+    else
+        cp ${input_bed} ${input_bed.baseName}.padded.bed
+    fi
     """
 }
 
@@ -1474,9 +1518,16 @@ workflow {
     }
 
     // --- Generate Diagnostic & Comparison Plots ---
+
+    // Determine raw paralog regions based on execution path
+    ch_raw_paralog_bed = params.run_duphmm ? FILTER_DUPHMM_REGIONS.out.bed : COMBINE_PARALOGS.out.paralog_bed
+    
+    // Apply the user-defined masking window
+    padded_paralogs = PAD_PARALOG_REGIONS(ch_raw_paralog_bed, ref_bundle_ch)
+
     dummy_bed = file("${workDir}/NO_DUPHMM.bed")
     dummy_bed.text = ""
-    ch_duphmm_plot = params.run_duphmm ? FILTER_DUPHMM_REGIONS.out.bed : Channel.of(dummy_bed)
+    ch_duphmm_plot = params.run_duphmm ? padded_paralogs.bed : Channel.of(dummy_bed)
 
     PLOT_PARALOG_LR(
         COMBINE_PARALOGS.out.lr_txt,
@@ -1497,13 +1548,12 @@ workflow {
 
     PLOT_ALLELE_BALANCE(ab_stats_ch.site_stats)
 
-    ch_paralog_bed    = params.run_duphmm ? FILTER_DUPHMM_REGIONS.out.bed : COMBINE_PARALOGS.out.paralog_bed
     val_paralog_label = params.run_duphmm ? "dupHMM" : "ngsParalog LR"
 
     PLOT_FILTER_OVERLAPS(
         angsd_out.high_depth_bed,
         angsd_out.hwe_bed,
-        ch_paralog_bed,
+        padded_paralogs.bed,
         val_paralog_label,
         ref_bundle_ch
     )
