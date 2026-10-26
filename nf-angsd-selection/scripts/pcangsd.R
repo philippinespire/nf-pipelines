@@ -8,18 +8,18 @@
 #
 # USAGE:        Rscript pcangsd.R --cov <input.cov> \
 #                                 --samplesheet <samplesheet.csv> \
-#                                 --out <output.pdf> \
+#                                 --out <output.png> \
 #                                 [--species <species_name>]
 #
 # INPUT ARGUMENTS:
 #   --cov         Path to space-separated PCAngsd output covariance matrix (.cov)
 #   --samplesheet CSV file containing metadata. Must include 'sample', 'pop', and 
 #                 'era' (historic/modern) columns matching matrix row order.
-#   --out         Target PDF file path for saved PCA plots
+#   --out         Target PNG file path for saved PCA plots
 #   --species     [Optional] Name of target species for main plot title 
 #                 (Default: "Species")
 #
-# OUTPUTS:       PDF containing a two-panel scatter plot (PC1/PC2 & PC2/PC3).
+# OUTPUTS:       PNG containing a two-panel scatter plot (PC1/PC2 & PC2/PC3).
 # ==============================================================================
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -31,7 +31,7 @@ for (i in seq(1, length(args), by = 2)) alist[[sub("^--","", args[i])]] <- args[
 cov_path       <- alist$cov
 samplesheet    <- alist$samplesheet
 species        <- if (!is.null(alist$species)) alist$species else "Species"
-out_pdf        <- alist$out
+out_png        <- alist$out
 
 # read samplesheet; expect columns: sample, pop, bam, era (historic|modern)
 meta <- read.csv(samplesheet, header = TRUE)
@@ -62,7 +62,7 @@ shape_map <- c(historic = 24, modern = 21)
 pch_vec <- shape_map[meta$era]
 
 
-pdf(out_pdf, width = 10, height = 5)
+png(out_png, width = 10, height = 5, units = "in", res = 300)
 layout(matrix(1:2, 1, 2, byrow = TRUE), respect = TRUE)
 par(oma = c(0, 0, 3, 0))
 par(pty = "s")

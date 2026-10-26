@@ -24,7 +24,7 @@ process PLOT_PCANGSD {
     path samplesheet_file
 
     output:
-    path "${params.species}.pcangsd.plot.pdf"
+    path "${params.species}.pcangsd.plot.png"
 
     script:
     """
@@ -32,7 +32,7 @@ process PLOT_PCANGSD {
         --cov ${pcangsd_cov} \\
         --samplesheet ${samplesheet_file} \\
         --species ${params.species} \\
-        --out ${params.species}.pcangsd.plot.pdf
+        --out ${params.species}.pcangsd.plot.png
     """
 }
 
@@ -45,7 +45,7 @@ process PLOT_ADMIXTURE {
     path metadata
 
     output:
-    path "${params.species}.admixture.pdf"
+    path "${params.species}.admixture.png"
 
     script:
     """
@@ -53,6 +53,6 @@ process PLOT_ADMIXTURE {
     Rscript ${projectDir}/scripts/plot_admixture.R \
         ${q_file} \
         ${metadata} \
-        ${params.species}.admixture.pdf
+        ${params.species}.admixture.png
     """
 }

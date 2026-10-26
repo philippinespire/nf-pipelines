@@ -11,7 +11,7 @@
 #               2. <metadata.csv> - CSV file containing sample metadata. Must 
 #                                 include a "era" column (e.g., historic/modern).
 #                                 Row order must match the .Q file exactly.
-#               3. <output.pdf>  - Target filename for the output PDF.
+#               3. <output.png>  - Target filename for the output PNG.
 #
 # REQUIREMENTS: Base R installation.
 # DATE:         June 2026
@@ -24,12 +24,12 @@ args <- commandArgs(trailingOnly = TRUE)
 
 # Validate that all 3 required arguments are present
 if (length(args) < 3) {
-  stop("\nUsage: Rscript plot_admixture.R <input.Q> <metadata.csv> <output.pdf>\n", call. = FALSE)
+  stop("\nUsage: Rscript plot_admixture.R <input.Q> <metadata.csv> <output.png>\n", call. = FALSE)
 }
 
 q_file     <- args[1]
 meta_file  <- args[2]
-output_pdf <- args[3]
+output_png <- args[3]
 
 # 2. Read data
 if (!file.exists(q_file)) stop(paste("Error: File not found -", q_file))
@@ -76,8 +76,8 @@ sample_labels <- as.character(sorted_data[[sample_label_col]])
 # Count how many individuals are in each category for labeling later 
 group_counts <- table(sorted_data$era)
 
-# 4. Open PDF graphics device 
-pdf(file = output_pdf, width = 10, height = 6)
+# 4. Open PNG graphics device 
+png(file = output_png, width = 10, height = 6, units = "in", res = 300)
 	
 # 5. Set margins (increase bottom margin for sample and era labels)
 par(mar = c(10, 4, 3, 1))
@@ -123,7 +123,7 @@ axis(side = 1,
      font = 2,
      cex.axis = 0.9)
 
-# 8. Close and save the PDF
+# 8. Close and save the PNG
 dev.off()
 
-cat("Success: Detected K =", K, "and saved plot to:", output_pdf, "\n")
+cat("Success: Detected K =", K, "and saved plot to:", output_png, "\n")
