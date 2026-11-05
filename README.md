@@ -6,6 +6,8 @@ Documentation and testing is work in progress.
 ## Content
 The original pipelines (`nf-trim-merged-unmerged` and `nf-angsd-diversity`) were developed as follow-up steps for GenErode. Later pipelines (`nf-paralog`, `nf-trim-generode`, and `nf-angsd-selection`) were developed to avoid the need for running Generode first. See the `readme.md` files under each pipeline for more information on using each one.
 
+A reasonable approach for a new project would be to run `nf-paralog`, then `nf-time-generode`, then `nf-angsd-selection`.
+
 ```
 nf-pipelines/
 ├── README.md
