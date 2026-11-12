@@ -35,7 +35,7 @@ reference/
 .snakemake/
 conda_cache/
 
-# Special handling for nf-angsd-selection
+# Special handling for results/ directories
 # Un-ignore this specific pipeline's results folder
 !nf-paralog/results/
 !nf-trim-generode/results/
@@ -52,3 +52,11 @@ nf-angsd-selection/results/large_data/
 
 # Special handling for nf-trim-generode input (small files)
 !nf-trim-generode/inputfiles/*.csv
+
+# Special handling for nf-trim-generode test dataset
+!nf-trim-generode/test_data/
+!nf-trim-generode/test_data/raw_reads/*.fastq.gz
+!nf-trim-generode/test_data/reference/test_ref.fasta
+!nf-trim-generode/test_data/reference/test_ref.fasta.fai
+nf-trim-generode/test_data/results/
+nf-trim-generode/test_data/results/large_data/

@@ -52,6 +52,7 @@ nf-trim-generode/
 │   ├── split_reads.sh     # Custom length splitting script for long, merged reads
 │   ├── samremovedup.py    # Custom python script for duplicate removal
 │   └── plot_qc_summary.R  # R script generating summary tables and QC plots  
+├── test_data/             # Small synthetic dataset and prep_test_ref.sh for pipeline validation
 ├── main.nf                # Master workflow execution script
 ├── mapping_modules.nf     # Module definitions for BWA ALN/MEM mapping
 └── nextflow.config        # Process resource configs and cluster profiles
@@ -97,6 +98,10 @@ The pipeline requires the following inputfiles:
 * Reference index and dictionary files (.fai, .dict, .bwt, .pac, .ann, .amb, and .sa)
 * CSV file with columns sample and era with the sample name and era (historical or modern) of all fastq files to be processed (`inputfiles/samplesheet.csv`). See [samplesheet_example.csv](examples/samplesheet_example.csv).
 * Directory containing all fastq files
+
+If repeatmasking is not run, this is also needed:
+
+* BED file with masked repeat regions
 
 The pipeline assumes that fastq files are named in the following way: 
 `<sampleID>_<index>_<flowcellID>_R1.fastq.gz` eg. `TzoCMta031_1_22CVWFLT3_R1.fastq.gz`  
@@ -236,6 +241,43 @@ nextflow run main.nf \
   --historical_mapper "aln" \
   -profile wahab \
   -resume
+```
+
+### Validating with the Test Dataset
+
+A small synthetic dataset (`test_data/`) is included to verify that your Conda environments, containers, and cluster profile work before running full-scale data. It contains four simulated paired-end libraries (two historical and two modern) alongside a 45 kb reference genome and repeat/paralog exclusion BED files, exercising two-pass mapper selection (`mem` to `aln`), read length normalization, indel realignment, `mapDamage`, `AMBER`, and summary QC plotting.
+
+From inside `nf-trim-generode/` (in a `tmux` session):
+
+```bash
+bash
+
+# 1. One-time setup: build BWA index files for test_data/reference/test_ref.fasta. Set to run on Wahab's container environment
+bash test_data/prep_test_ref.sh
+
+# 2. Launch the validation run using the built-in test profile
+module load container_env nextflow
+nextflow run main.nf -profile test,wahab -resume
+
+
+`run_test.sh` skips de novo `RepeatModeler`/`RepeatMasker` (`--run_repeatmasking false`) using `test_data/reference/test_repeats.bed` so the test finishes quickly.
+
+Across the 34,500 bp of non-masked reference sequence (`test_ref.inclusion.bed`, after subtracting the 10,500 bp of combined repeat and paralog exclusions), a successful test run should produce values close to the following:
+
+* Derived historical trim length (`test_data/results/stats/historical_trimlength.txt`): ~74 bp ($\le 80\text{ bp}$), automatically triggering Pass 2 remapping with `bwa aln`.
+* Per-sample mean depth (`test_data/results/depth/*.dpstats.txt` and `total_cov` in `test_data/results/summary_reports/individual_sequencing_summary_table.csv`):
+| Sample | Era | Raw Read Pairs | Expected Mean Depth (total_cov) |
+| --- | --- | --- | --- |
+|Hist01|historical|350|~0.60× (0.55–0.65×)|
+|Hist02|historical520|~0.89× (0.83–0.95×)|
+|Mod01|modern|400|~1.12× (1.05–1.19×)|
+|Mod02|modern|600~1.68× (1.59–1.77×)|
+
+* Era-level contig depth (`test_data/results/summary_reports/contig_depth_summary.tsv`): ~0.75× for historical and ~1.40× for modern across each contig (chr1, chr2, chr3).
+
+Once verified, you can remove `test_data/results/` and `work/` to reclaim disk space before starting a production run:
+```
+rm -r test_data/results/ work/
 ```
 
 ## Output
