@@ -6,6 +6,8 @@ Documentation and testing is work in progress.
 ## Content
 The original pipelines (`nf-trim-merged-unmerged` and `nf-angsd-diversity`) were developed as follow-up steps for GenErode. Later pipelines (`nf-paralog`, `nf-trim-generode`, and `nf-angsd-selection`) were developed to avoid the need for running Generode first. See the `readme.md` files under each pipeline for more information on using each one.
 
+A reasonable approach for a new project would be to run `nf-paralog`, then `nf-time-generode`, then `nf-angsd-selection`.
+
 ```
 nf-pipelines/
 ├── README.md
@@ -31,8 +33,8 @@ nf-pipelines/
                                 # putatively neutral sites (including monomorphic)
 
 ```
-## QC steps
-Before running the original pipelines (e.g., `nf-trim-merged-unmerged` and `nf-angsd-diversity`), it is advised to run the following QC scripts on the GenErode output to estimate average readlength, check sample (breadth of) coverage and mapping bias. These are also used as input for the various pipelines. I also provided a script to generate publication-ready sequencing statistics. Note that all these scripts were originally written by and for Marianne on the Old Dominion WAHAB cluster.
+## QC steps for original pipelines
+If you decide to run the original pipelines (e.g., `nf-trim-merged-unmerged` and `nf-angsd-diversity`), it is advised to run the following QC scripts on the GenErode output to estimate average readlength, check sample (breadth of) coverage and mapping bias. These results are also used as input for these pipelines. There is also a script to generate publication-ready sequencing statistics. Note that all these scripts were originally written by and for Marianne on the Old Dominion WAHAB cluster.
 
 The different scripts are:
 - Average readlength
