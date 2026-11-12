@@ -24,14 +24,14 @@ params.run_historical_amber     = true // Whether to run amber quality assessmen
 params.run_modern_amber         = true // Whether to run amber quality assessment on the mapped modern reads
 params.split_script = "${projectDir}/scripts/split_reads.sh"
 params.rmdup_script = "${projectDir}/scripts/samremovedup.py"
-params.amber_script = "/archive/carpenterlab/pire/softwares/AMBERv2/AMBER" 
+params.amber_script = "AMBER" // Path to the AMBER executable. Overwritten by the profile in nextflow.config.
 params.bwa_threads  = 4
 params.bam_q        = 25 // Mapping quality threshold. 
 params.trimlength   = 85 // Default fallback trim length if no historical reads map successfully
 
 // Helper function
 def resolve_reads(String sample_id) {
-    // Search for R1 files with common extensions (.fastq.gz, .fq.gz, _001.fastq.gz, etc.)
+    // Search for R1 files with common extensions (.fastq.gz, .fq.gz, etc.)
     def r1_files = file("${params.indir}/${sample_id}{_R1,_1}{,.fastq.gz,.fq.gz}").sort()
     def r2_files = file("${params.indir}/${sample_id}{_R2,_2}{,.fastq.gz,.fq.gz}").sort()
 
@@ -48,7 +48,7 @@ process REPEAT_MODELER {
     tag "De novo repeat discovery on ${ref_fasta.baseName}"
     label 'process_high' // Modeler usually requires significantly more RAM/CPU
     scratch true // run in node-local scratch, stage outputs back
-    publishDir "${params.outdir}/data/reference/modeler", mode: 'copy'
+    publishDir "${params.outdir}/large_data/reference/modeler", mode: 'copy'
 
     input:
     path ref_fasta
@@ -77,7 +77,7 @@ process REPEAT_MODELER {
 process EXTRACT_CPG {
     tag "Extracting CpG sites from ${ref_fasta.baseName}"
     label 'process_low'
-    publishDir "${params.outdir}/data/reference", mode: 'copy'
+    publishDir "${params.outdir}/large_data/reference", mode: 'copy'
 
     input:
     path ref_fasta
@@ -126,7 +126,7 @@ process EXTRACT_CPG {
 process REPEAT_MASKER {
     tag "Masking ${ref_fasta.baseName}"
     label 'process_medium'
-    publishDir "${params.outdir}/data/reference", mode: 'copy'
+    publishDir "${params.outdir}/large_data/reference", mode: 'copy'
 
     input:
     path ref_fasta
@@ -163,7 +163,7 @@ process REPEAT_MASKER {
         if (NR==1) {chr=\$1; start=\$2; end=\$3; next} \
         if (\$1==chr && \$2<=end) { if (\$3>end) end=\$3 } \
         else { print chr, start, end; chr=\$1; start=\$2; end=\$3 } \
-    } END { print chr, start, end }' combined_sorted.bed > ${ref_fasta.baseName}.combined_mask.bed
+    } END { if (NR>0) print chr, start, end }' combined_sorted.bed > ${ref_fasta.baseName}.combined_mask.bed
 
     # Generate reference filter tracking indexes for downstream parsing (ANGSD/BCFtools)
     cut -f1 ${ref_fasta.baseName}.combined_mask.bed | uniq | awk '{print \$0 ":"}' > ${ref_fasta.baseName}.cleaned.regions
@@ -173,7 +173,7 @@ process REPEAT_MASKER {
 process COMBINE_BEDS {
     tag "Combining mask & exclude BEDs"
     label 'process_low'
-    publishDir "${params.outdir}/data/reference", mode: 'copy'
+    publishDir "${params.outdir}/large_data/reference", mode: 'copy'
 
     input:
     path base_bed
@@ -198,8 +198,7 @@ process COMBINE_BEDS {
 }
 
 process PREP_REFERENCE_REPEAT {
-    publishDir "${params.outdir}/data/reference", mode: 'copy'
-    module 'angsd/0.940'
+    publishDir "${params.outdir}/large_data/reference", mode: 'copy'
 
     input:
     path ref           // Expects the reference FASTA
@@ -212,6 +211,7 @@ process PREP_REFERENCE_REPEAT {
     path "${params.reference_prefix}.repma.angsd.txt.bin", emit: sites_bin
     path "${params.reference_prefix}.regions", emit: regions
     path "${params.reference_prefix}.chrs", emit: chrs
+    path "${params.reference_prefix}.inclusion.bed", emit: inclusion_bed
 
     script:
     """
@@ -242,7 +242,8 @@ process PREP_REFERENCE_REPEAT {
         if (cur < g_end) print c, cur, g_end
     }' sorted_mask.bed full_genome.bed > inclusion_sites.bed
 
-    # 4. Format inclusion BED into 1-based ANGSD sites file and index it
+    # 4. Keep 0-based inclusion BED for samtools depth and format 1-based ANGSD sites file
+    cp inclusion_sites.bed ${params.reference_prefix}.inclusion.bed
     awk '{print \$1"\\t"\$2+1"\\t"\$3}' inclusion_sites.bed > ${params.reference_prefix}.repma.angsd.txt
     angsd sites index ${params.reference_prefix}.repma.angsd.txt
 
@@ -256,7 +257,7 @@ process FASTP_MERGED {
     // takes paired-end raw sequencing reads, cleans them up (quality filtering, adapter trimming, poly-G tail removal), 
     // and attempts to merge overlapping forward and reverse reads into single, longer reads.
      tag "$sample_id"
-    publishDir "${params.outdir}/fastp", mode: 'copy', pattern: "*.{html,json}"
+    publishDir "${params.outdir}/large_data/fastp", mode: 'copy', pattern: "*.{html,json}"
 
     input:
     tuple val(sample_id), path(reads)
@@ -278,7 +279,7 @@ process SPLIT_MERGED {
     // turning a single long read into two "pseudo-paired" reads. 
     // Any read that is already shorter than the target length is left completely untouched.
     tag "$sample_id"
-    publishDir "${params.outdir}/data/fastq", mode: 'copy'
+    publishDir "${params.outdir}/large_data/fastq", mode: 'copy'
 
     input:
     tuple val(sample_id), path(merged_fq), val(trim_len)
@@ -294,7 +295,7 @@ process SPLIT_MERGED {
 
 process QC_MERGED {
     tag "$sample_id"
-    publishDir "${params.outdir}/fastqc", mode: 'copy'
+    publishDir "${params.outdir}/large_data/fastqc", mode: 'copy'
 
     input:
     tuple val(sample_id), path(merged_fq)
@@ -317,7 +318,7 @@ process SEQTK_TRIM {
     // takes unmerged paired-end reads (the ones that didn't overlap enough to be combined) 
     // and  truncates them down to a maximum length (trim_len) using seqtk    
     tag "$sample_id"
-    publishDir "${params.outdir}/data/fastq", mode: 'copy'
+    publishDir "${params.outdir}/large_data/fastq", mode: 'copy'
 
     input:
     tuple val(sample_id), path(r1), path(r2), val(trim_len)
@@ -334,7 +335,7 @@ process SEQTK_TRIM {
 
 process QC_UNMERGED {
     tag "$sample_id"
-    publishDir "${params.outdir}/fastqc", mode: 'copy'
+    publishDir "${params.outdir}/large_data/fastqc", mode: 'copy'
 
     input:
     tuple val(sample_id), path(r1), path(r2)
@@ -459,21 +460,22 @@ process INDEL_REALN {
     tuple val(sample_name), path("${sample_name}.merged.L${trimlength}.realn.bam")
 
     script:
+    def gatk_jar = task.ext.gatk_jar ?: '/usr/GenomeAnalysisTK.jar'
     // ref_bundle[0] is the fasta file
     """
     # Target Creator
-    java -jar /usr/GenomeAnalysisTK.jar \
+    java -jar ${gatk_jar} \
         -T RealignerTargetCreator -R ${ref_bundle[0]} -I ${bam} -o ${sample_name}.realn_targets.list -nt ${task.cpus}
 
     # Indel Realigner
-    java -jar /usr/GenomeAnalysisTK.jar \
+    java -jar ${gatk_jar} \
         -T IndelRealigner -R ${ref_bundle[0]} -I ${bam} -targetIntervals ${sample_name}.realn_targets.list -o ${sample_name}.merged.L${trimlength}.realn.bam
     """
 }
 
 process INDEX_REALIGNED {
     tag "$sample_name"
-    publishDir "${params.outdir}/data/bam", mode: 'copy'
+    publishDir "${params.outdir}/large_data/bam", mode: 'copy'
 
     input:
     tuple val(sample_name), path(bam)
@@ -497,40 +499,39 @@ process BAM_QC {
     path bed_file
 
     output:
-    path "${sample_name}.Q25.L${trimlength}.bam.dpstats.txt"
+    path "${sample_name}.Q${params.bam_q}.L${trimlength}.bam.dpstats.txt"
 
     script:
     """
     # calculate depth
-    samtools depth -a -Q 30 -q 25 -b ${bed_file} ${bam} > ${sample_name}.Q25.bam.dp
-    awk '{sum+=\$3} END { print sum/NR }' ${sample_name}.Q25.bam.dp > ${sample_name}.Q25.L${trimlength}.bam.dpstats.txt
-    rm ${sample_name}.Q25.bam.dp
+    samtools depth -a -q 30 -Q ${params.bam_q} -b ${bed_file} ${bam} > ${sample_name}.Q${params.bam_q}.bam.dp
+    awk '{sum+=\$3} END { print sum/NR }' ${sample_name}.Q${params.bam_q}.bam.dp > ${sample_name}.Q${params.bam_q}.L${trimlength}.bam.dpstats.txt
+    rm ${sample_name}.Q${params.bam_q}.bam.dp
     """
 }
 
 process MAPDAMAGE {
     tag "$sample_name"
     // Send BAM and BAI files to the rescaled bam folder
-    publishDir "${params.outdir}/data/bam_rescaled", mode: 'copy', pattern: "*.bam*"
+    publishDir "${params.outdir}/large_data/bam_rescaled", mode: 'copy', pattern: "*.bam*"
     // Send the PDF and TXT stats files to the mapdamage folder
-    publishDir "${params.outdir}/mapdamage", mode: 'copy', pattern: "*.{pdf,txt}"    
+    publishDir "${params.outdir}/large_data/mapdamage", mode: 'copy', pattern: "*.{pdf,txt}"    
     
-    module 'container_env:mapdamage2'
-
     input:
     tuple val(sample_name), path(bam), path(bai)
     path ref_bundle
 
     output:
-    tuple val(sample_name), path("${sample_name}.rescaled.bam"), path("${sample_name}.rescaled.bam.bai"), emit: rescaled_indexed
+    tuple val(sample_name), path("${sample_name}.rescaled.bam"), path("${sample_name}.rescaled.bam.bai"), emit: rescaled_indexed, optional: true
     path "*.pdf", emit: plots, optional: true
     path "*.txt", emit: stats, optional: true
 
     script:
     def input_prefix = bam.name.replaceAll(/\.bam$/, '')
+    def mapdamage_cmd = task.ext.mapdamage ?: 'mapDamage'
     """
     # Run mapDamage for damage assessment and rescaling    
-    crun mapDamage -i ${bam} -r ${ref_bundle[0]} -d mapd_output --rescale --merge-reference-sequences --length 150
+    ${mapdamage_cmd} -i ${bam} -r ${ref_bundle[0]} -d mapd_output --rescale --merge-reference-sequences --length 150
 
     # Copy rescaled BAM to standard output name and index it
     if [ -f "mapd_output/${input_prefix}.rescaled.bam" ]; then
@@ -562,32 +563,32 @@ process AMBER_PREP {
     path ref_bundle
 
     output:
-    tuple val(sample_name), path("amber_input.txt"), path("${sample_name}.tags.MQ25.bam")
+    tuple val(sample_name), path("amber_input.txt"), path("${sample_name}.tags.MQ${params.bam_q}.bam")
 
     script:
     """
-    # Adding MD tags and filtering for MQ25
+    # Adding MD tags and filtering for MQ${params.bam_q}
     samtools calmd -@ ${task.cpus} -b ${bam} ${ref_bundle[0]} > ${sample_name}.tags.bam
-    samtools view -@ ${task.cpus} -bq 25 ${sample_name}.tags.bam > ${sample_name}.tags.MQ25.bam
+    samtools view -@ ${task.cpus} -bq ${params.bam_q} ${sample_name}.tags.bam > ${sample_name}.tags.MQ${params.bam_q}.bam
 
     # Create input file for AMBER
-    echo -e "${sample_name}\\t${sample_name}.tags.MQ25.bam" > amber_input.txt
+    echo -e "${sample_name}\\t${sample_name}.tags.MQ${params.bam_q}.bam" > amber_input.txt
     """
 }
 
 process AMBER {
     tag "$sample_name"
-    publishDir "${params.outdir}/amber", mode: 'copy'
+    publishDir "${params.outdir}/large_data/amber", mode: 'copy'
 
     input:
     tuple val(sample_name), path(amber_input), path(bam_file)
 
     output:
-    tuple val(sample_name), path("${sample_name}.amber_MQ25.pdf"), path("${sample_name}.amber_MQ25.txt")
+    tuple val(sample_name), path("${sample_name}.amber_MQ${params.bam_q}.pdf"), path("${sample_name}.amber_MQ${params.bam_q}.txt")
 
     script:
     """
-    python3 ${params.amber_script} --bamfiles ${amber_input} --output ${sample_name}.amber_MQ25
+    python3 ${params.amber_script} --bamfiles ${amber_input} --output ${sample_name}.amber_MQ${params.bam_q}
     """
 }
 
@@ -614,21 +615,21 @@ process CALCULATE_SAMPLE_STATS {
     print(total)
     " 2>/dev/null || echo "0")
 
-    # 2. Total Mapped, Unique, MQ25 Reads
+    # 2. Total Mapped, Unique, MQ${params.bam_q} Reads
     total_mapped=\$(samtools view -c -F 4 ${bam})
     total_uniq=\$(samtools view -c -F 1028 ${bam})
-    total_MQ25=\$(samtools view -c -q 25 ${bam})
+    total_MQ=\$(samtools view -c -q ${params.bam_q} ${bam})
 
     # 3. Calculate Endogenous, Complexity, and GRR
     endogenous=\$(awk -v m="\$total_mapped" -v s="\$total_seqs" 'BEGIN {if (s>0) printf "%.5f", m/s; else print "0"}')
     complexity=\$(awk -v u="\$total_uniq" -v m="\$total_mapped" 'BEGIN {if (m>0) printf "%.5f", u/m; else print "0"}')
-    grr=\$(awk -v mq="\$total_MQ25" -v s="\$total_seqs" 'BEGIN {if (s>0) printf "%.5f", mq/s; else print "0"}')
+    grr=\$(awk -v mq="\$total_MQ" -v s="\$total_seqs" 'BEGIN {if (s>0) printf "%.5f", mq/s; else print "0"}')
 
     # 4. Total Coverage across target BED
-    total_cov=\$(samtools depth -a -q 30 -Q 25 -b ${bed_file} ${bam} | awk '{sum+=\$3} END {if (NR>0) print sum/NR; else print "0"}')
+    total_cov=\$(samtools depth -a -q 30 -Q ${params.bam_q} -b ${bed_file} ${bam} | awk '{sum+=\$3} END {if (NR>0) print sum/NR; else print "0"}')
 
     # 5. Read length metrics (min, max, median, mean)
-    read_stats=\$(samtools view -q 25 ${bam} | awk '{print length(\$10)}' | awk '
+    read_stats=\$(samtools view -q ${params.bam_q} ${bam} | awk '{print length(\$10)}' | awk '
         BEGIN { OFS="\\t" }
         { sum+=\$1; nums[NR]=\$1 }
         END {
@@ -639,7 +640,7 @@ process CALCULATE_SAMPLE_STATS {
         }')
 
     # Output formatted line with sample ID and era header
-    echo -e "${sample_id}\\t${era}\\t\${total_seqs}\\t\${total_mapped}\\t\${total_uniq}\\t\${total_MQ25}\\t\${endogenous}\\t\${complexity}\\t\${grr}\\t\${total_cov}\\t\${read_stats}" > ${sample_id}.stats_line.tsv
+    echo -e "${sample_id}\\t${era}\\t\${total_seqs}\\t\${total_mapped}\\t\${total_uniq}\\t\${total_MQ}\\t\${endogenous}\\t\${complexity}\\t\${grr}\\t\${total_cov}\\t\${read_stats}" > ${sample_id}.stats_line.tsv
     """
 }
 
@@ -660,14 +661,14 @@ process CONTIG_DEPTH_QC {
     echo -e "contig\\tera\\tdepth" > contig_depth_summary.tsv
 
     if ls modern/*.bam 1> /dev/null 2>&1; then
-        samtools depth -a -q 30 -Q 25 -b ${bed_file} modern/*.bam | awk '
+        samtools depth -a -q 30 -Q ${params.bam_q} -b ${bed_file} modern/*.bam | awk '
             { sum[\$1] += \$3; count[\$1]++ }
             END { for (c in sum) print c "\tmodern\t" (count[c] > 0 ? sum[c]/count[c] : 0) }
         ' >> contig_depth_summary.tsv
     fi
 
     if ls historical/*.bam 1> /dev/null 2>&1; then
-        samtools depth -a -q 30 -Q 25 -b ${bed_file} historical/*.bam | awk '
+        samtools depth -a -q 30 -Q ${params.bam_q} -b ${bed_file} historical/*.bam | awk '
             { sum[\$1] += \$3; count[\$1]++ }
             END { for (c in sum) print c "\thistorical\t" (count[c] > 0 ? sum[c]/count[c] : 0) }
         ' >> contig_depth_summary.tsv
@@ -685,6 +686,8 @@ process GENERATE_QC_REPORTS_AND_PLOTS {
     path contig_stats
     path amber_files
     path mapdamage_files
+    path repeat_bed
+    path paralog_bed
 
     output:
     path "individual_sequencing_summary_table.csv"
@@ -695,7 +698,7 @@ process GENERATE_QC_REPORTS_AND_PLOTS {
     def rcmd = task.ext.rscript ?: 'Rscript' // allow nextflow.config to override Rscript path if needed (eg, with crun Rscript)
     """
     # 1. Header row for master sequencing stats table
-    echo -e "sample\tera\ttotal_seqs\ttotal_mapped\ttotal_uniq\ttotal_MQ25\tendogenous\tcomplexity\tgrr\ttotal_cov\tread_min\tread_max\tread_median\tread_mean" > master_sequencing_stats.tsv
+    echo -e "sample\tera\ttotal_seqs\ttotal_mapped\ttotal_uniq\ttotal_MQ${params.bam_q}\tendogenous\tcomplexity\tgrr\ttotal_cov\tread_min\tread_max\tread_median\tread_mean" > master_sequencing_stats.tsv
     cat ${stats_files} >> master_sequencing_stats.tsv
 
     # 2. Stage AMBER and mapDamage output directories
@@ -709,7 +712,9 @@ process GENERATE_QC_REPORTS_AND_PLOTS {
         ${contig_stats} \
         amber_dir \
         mapd_dir \
-        .
+        . \
+        ${repeat_bed} \
+        ${paralog_bed}
     """
 }
 
@@ -878,7 +883,6 @@ workflow {
     // channnels for reference files and for the initial mapper to use for historical reads
     fasta_ref_ch = Channel.fromPath(params.reference, checkIfExists: true).first()
     ref_fai_ch  = Channel.fromPath("${params.reference}.fai", checkIfExists: true).first()
-    ref_dict_ch = Channel.fromPath(params.reference.replaceAll(/\.(fa|fasta|fna)$/, '.dict'), checkIfExists: true).first()
     pass1_mapper_ch = Channel.value(params.historical_mapper)
 
     // 1. Conduct optional repeat modeling, repeat-masking and CpG site filtering on the reference genome
@@ -914,7 +918,7 @@ workflow {
     }
 
     // then prepare the reference for downstream ANGSD analyses
-    PREP_REFERENCE_REPEAT(fasta_ref_ch, ref_fai_ch, bed_ch)
+    prep_ref = PREP_REFERENCE_REPEAT(fasta_ref_ch, ref_fai_ch, bed_ch)
 
     // 2. FASTP on Historical Reads
     historical_fastp_input = historical_samples_ch.map { id, r1, r2 -> tuple(id, [r1, r2]) }    
@@ -979,8 +983,8 @@ workflow {
         .mix(hist_bwa_unmerged_pass2)
     
     // 7. Sub-pipelines execution to produce indexed bams and optional rescaled bams for historical samples
-    modern_pipeline = MODERN_PIPELINE(modern_samples_ch, trim_length_ch, mapper_ch, ref_bundle_ch, bed_ch)
-    historical_pipeline = HISTORICAL_PIPELINE(final_hist_bwa_merged, final_hist_bwa_unmerged, ref_bundle_ch, trim_length_ch, bed_ch)
+    modern_pipeline = MODERN_PIPELINE(modern_samples_ch, trim_length_ch, mapper_ch, ref_bundle_ch, prep_ref.inclusion_bed)
+    historical_pipeline = HISTORICAL_PIPELINE(final_hist_bwa_merged, final_hist_bwa_unmerged, ref_bundle_ch, trim_length_ch, prep_ref.inclusion_bed)
 
     // ------------------------------------------------------------------
     // Aggregate QC, Metrics & Plot Generation
@@ -1005,26 +1009,31 @@ workflow {
         .join(fastp_jsons_ch) // tuple(sample_id, era, bam, bai, fastp_json)
 
     // Calculate individual stats
-    indiv_stats_ch = CALCULATE_SAMPLE_STATS(sample_qc_input_ch, bed_ch)
+    indiv_stats_ch = CALCULATE_SAMPLE_STATS(sample_qc_input_ch, prep_ref.inclusion_bed)
 
     // Calculate contig depth stats separated by era
     modern_bam_files = modern_pipeline.indexed.flatMap { id, bam, bai -> [bam, bai] }.collect()
     historical_bam_files = historical_pipeline.indexed.flatMap { id, bam, bai -> [bam, bai] }.collect()
-    contig_stats_ch = CONTIG_DEPTH_QC(modern_bam_files, historical_bam_files, bed_ch)
+    contig_stats_ch = CONTIG_DEPTH_QC(modern_bam_files, historical_bam_files, prep_ref.inclusion_bed)
 
     // Gather all AMBER and MapDamage output stats files
     amber_stats_ch = modern_pipeline.amber
         .mix(historical_pipeline.amber)
         .collect()
 
+    // Prepare channels for QC report visualization
     mapdamage_stats_ch = historical_pipeline.mapdamage_stats.collect()
+    repeat_mask_for_qc = params.run_repeatmasking ? masking_output.mask_bed : Channel.of(file("NO_FILE_REPEAT"))
+    paralog_mask_for_qc = params.exclude_bed ? Channel.fromPath(params.exclude_bed) : Channel.of(file("NO_FILE_PARALOG"))
 
     // Generate final plots and summary tables
     GENERATE_QC_REPORTS_AND_PLOTS(
         indiv_stats_ch.collect(),
         contig_stats_ch,
         amber_stats_ch,
-        mapdamage_stats_ch
+        mapdamage_stats_ch,
+        repeat_mask_for_qc,
+        paralog_mask_for_qc
     )
 
 }

@@ -11,9 +11,11 @@ suppressPackageStartupMessages({
 args <- commandArgs(trailingOnly = TRUE)
 stats_file   <- args[1] # master_sequencing_stats.tsv
 contig_file  <- args[2] # contig_depth_summary.tsv
-amber_dir    <- args[3] # directory containing *.amber_MQ25.txt
+amber_dir    <- args[3] # directory containing *.amber_MQ*.txt
 mapd_dir     <- args[4] # directory containing mapdamage outputs
 out_dir      <- args[5] # publish directory
+repeat_bed_path  <- args[6] # optional RepeatMasker BED file
+paralog_bed_path <- args[7] # optional Paralog BED file
 
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -75,10 +77,10 @@ if (length(amber_files) > 0) {
     lines <- readLines(filepath)
     sep_idx <- grep("^---", lines)
     
-    # Extract sample name from header or filename
-    sample_line <- lines[grep("^sample:", lines)]
-    sample_id <- if (length(sample_line) > 0) trimws(sub("^sample:\\s*", "", sample_line[1])) else sub("\\.amber_MQ25\\.txt$", "", basename(filepath))
+    # Extract sample name directly from standardized Nextflow filename (<sample_name>.amber_MQ25.txt)
+    sample_id <- sub("\\.amber_MQ[0-9]+\\.txt$", "", basename(filepath))
     
+
     get_block <- function(header_pattern) {
       h_idx <- grep(header_pattern, lines)
       if (length(h_idx) == 0) return(NULL)
@@ -211,7 +213,8 @@ if (length(mapd_files) > 0) {
 }
 
 # --- Plot 6: 12-Subpanel Summary Boxplots by Era ---
-  metric_cols <- c("total_seqs", "total_mapped", "total_uniq", "total_MQ25",
+  mq_col <- grep("^total_MQ[0-9]+$", colnames(stats), value = TRUE)[1]
+  metric_cols <- c("total_seqs", "total_mapped", "total_uniq", mq_col,
                    "endogenous", "complexity", "grr", "total_cov",
                    "read_min", "read_max", "read_median", "read_mean")
   
@@ -246,3 +249,172 @@ if (length(mapd_files) > 0) {
 
     ggsave(file.path(out_dir, "individual_summary_metrics_boxplots.png"), p6, width = 12, height = 9)
 }
+
+
+# ==============================================================================
+# Helper Functions for BED Interval Processing
+# ==============================================================================
+load_and_merge_bed <- function(bed_path) {
+  if (is.na(bed_path) || !file.exists(bed_path) || file.info(bed_path)$size == 0 || basename(bed_path) %in% c("NO_FILE_REPEAT", "NO_FILE_PARALOG")) {
+    return(NULL)
+  }
+  
+  df <- tryCatch({
+    read_tsv(bed_path, col_names = FALSE, show_col_types = FALSE, comment = "#")
+  }, error = function(e) NULL)
+  
+  if (is.null(df) || nrow(df) == 0) return(NULL)
+  
+  df <- df %>%
+    select(chr = 1, start = 2, end = 3) %>%
+    mutate(start = as.numeric(start), end = as.numeric(end)) %>%
+    filter(!is.na(start) & !is.na(end) & end > start) %>%
+    arrange(chr, start, end)
+  
+  if (nrow(df) == 0) return(NULL)
+  
+  # Merge overlapping intervals per chromosome
+  df_merged <- df %>%
+    group_by(chr) %>%
+    group_modify(~ {
+      if (nrow(.x) == 0) return(.x)
+      s_vec <- numeric()
+      e_vec <- numeric()
+      cur_s <- .x$start[1]
+      cur_e <- .x$end[1]
+      if (nrow(.x) > 1) {
+        for (i in 2:nrow(.x)) {
+          if (.x$start[i] <= cur_e) {
+            cur_e <- max(cur_e, .x$end[i])
+          } else {
+            s_vec <- c(s_vec, cur_s)
+            e_vec <- c(e_vec, cur_e)
+            cur_s <- .x$start[i]
+            cur_e <- .x$end[i]
+          }
+        }
+      }
+      s_vec <- c(s_vec, cur_s)
+      e_vec <- c(e_vec, cur_e)
+      tibble(start = s_vec, end = e_vec)
+    }) %>%
+    ungroup()
+  
+  return(df_merged)
+}
+
+intersect_beds <- function(bed1, bed2) {
+  if (is.null(bed1) || is.null(bed2) || nrow(bed1) == 0 || nrow(bed2) == 0) {
+    return(NULL)
+  }
+  
+  ov <- inner_join(bed1, bed2, by = "chr", relationship = "many-to-many") %>%
+    filter(start.x < end.y & start.y < end.x) %>%
+    mutate(
+      start = pmax(start.x, start.y),
+      end = pmin(end.x, end.y)
+    ) %>%
+    filter(end > start) %>%
+    select(chr, start, end)
+  
+  if (nrow(ov) == 0) return(NULL)
+  return(ov)
+}
+
+# Load and merge BED intervals
+bed_rep <- load_and_merge_bed(repeat_bed_path)
+bed_par <- load_and_merge_bed(paralog_bed_path)
+bed_ov  <- intersect_beds(bed_rep, bed_par)
+
+has_rep <- !is.null(bed_rep) && nrow(bed_rep) > 0
+has_par <- !is.null(bed_par) && nrow(bed_par) > 0
+
+# --- Plot 7: Masking Summary Bar Plot (Runs ONLY if BOTH RepeatMasker and Paralog exist) ---
+if (has_rep && has_par) {
+  mb_rep <- sum(bed_rep$end - bed_rep$start) / 1e6
+  mb_par <- sum(bed_par$end - bed_par$start) / 1e6
+  mb_ov  <- if (!is.null(bed_ov)) sum(bed_ov$end - bed_ov$start) / 1e6 else 0
+  
+  df_bar <- tibble(
+    Mask = factor(c("RepeatMasker", "Paralog Mask", "Overlap (Both)"),
+                  levels = c("RepeatMasker", "Paralog Mask", "Overlap (Both)")),
+    Mb   = c(mb_rep, mb_par, mb_ov)
+  )
+  
+  p7 <- ggplot(df_bar, aes(x = Mask, y = Mb, fill = Mask)) +
+    geom_col(width = 0.5, show.legend = FALSE) +
+    geom_text(aes(label = sprintf("%.2f Mb", Mb)), vjust = -0.5, size = 3.8) +
+    scale_fill_manual(values = c("RepeatMasker" = "#E69F00", "Paralog Mask" = "#56B4E9", "Overlap (Both)" = "#D55E00")) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+    theme_bw(base_size = 12) +
+    labs(
+      title = "Genome Masking Summary",
+      x = "Mask Type",
+      y = "Genome Masked (Mb)"
+    )
+  
+  ggsave(file.path(out_dir, "genome_masking_summary_bar.png"), p7, width = 7, height = 5)
+}
+
+# --- Plot 8: Genome-wide Manhattan Masking Tracks Plot (Runs if RepeatMasker OR Paralog exists) ---
+if (has_rep || has_par) {
+  track_list <- list()
+  if (has_rep) track_list$RepeatMasker <- bed_rep %>% mutate(track = "RepeatMasker")
+  if (has_par) track_list$`Paralog Mask` <- bed_par %>% mutate(track = "Paralog Mask")
+  if (has_rep && has_par && !is.null(bed_ov)) track_list$`Overlap (Both)` <- bed_ov %>% mutate(track = "Overlap (Both)")
+  
+  all_tracks <- bind_rows(track_list)
+  
+  # Compute contig offsets for cumulative Manhattan coordinates
+  contig_info <- all_tracks %>%
+    group_by(chr) %>%
+    summarise(contig_len = max(end), .groups = "drop") %>%
+    arrange(chr) %>%
+    mutate(
+      offset = lag(cumsum(as.numeric(contig_len)), default = 0),
+      center = offset + contig_len / 2
+    )
+  
+  all_tracks_cum <- all_tracks %>%
+    left_join(contig_info %>% select(chr, offset), by = "chr") %>%
+    mutate(
+      start_cum_mb = (start + offset) / 1e6,
+      end_cum_mb   = (end + offset) / 1e6,
+      track        = factor(track, levels = c("RepeatMasker", "Paralog Mask", "Overlap (Both)"))
+    )
+  
+  # Format contig labels to avoid text crowding on smaller contigs
+  if (nrow(contig_info) > 30) {
+    contig_info_plot <- contig_info %>% slice_max(contig_len, n = 25)
+  } else {
+    contig_info_plot <- contig_info
+  }
+  
+  p8 <- ggplot() +
+    geom_vline(xintercept = contig_info$offset / 1e6, color = "grey85", linetype = "dashed") +
+    geom_segment(
+      data = all_tracks_cum,
+      aes(x = start_cum_mb, xend = end_cum_mb, y = track, yend = track, color = track),
+      linewidth = 3.5
+    ) +
+    scale_x_continuous(
+      breaks = contig_info_plot$center / 1e6,
+      labels = contig_info_plot$chr,
+      expand = c(0.01, 0.01)
+    ) +
+    scale_color_manual(values = c("RepeatMasker" = "#E69F00", "Paralog Mask" = "#56B4E9", "Overlap (Both)" = "#D55E00")) +
+    theme_bw(base_size = 11) +
+    labs(
+      title = "Genome-Wide Masked Regions Across Chromosomes",
+      x = "Contig / Cumulative Genomic Position (Mb)",
+      y = "Mask Track",
+      color = "Track"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom"
+    )
+  
+  ggsave(file.path(out_dir, "genome_masking_manhattan.png"), p8, width = 11, height = 4.5)
+}
+

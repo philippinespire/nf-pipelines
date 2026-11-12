@@ -37,8 +37,17 @@ conda_cache/
 
 # Special handling for nf-angsd-selection
 # Un-ignore this specific pipeline's results folder
+!nf-paralog/results/
+!nf-trim-generode/results/
 !nf-angsd-selection/results/
 # Ignore large_data inside the un-ignored results folder
+nf-paralog/results/large_data/
+nf-paralog/results/fastp/
+nf-trim-generode/results/large_data/
+nf-trim-generode/results/fastp/
+nf-trim-generode/results/fastqc/
+nf-trim-generode/results/mapdamage/
+nf-trim-generode/results/amber/
 nf-angsd-selection/results/large_data/
 
 # Special handling for nf-trim-generode input (small files)

@@ -25,7 +25,7 @@ The pipeline can be installed directly via git:
 
 ```bash
 git clone https://github.com/philippinespire/nf-pipelines.git
-cd ./nf-trim-merged-unmerged
+cd ./nf-trim-generode
 ```
 
 > [!NOTE]
@@ -41,7 +41,7 @@ cd ./nf-trim-merged-unmerged
 ## Folder structure
 Before running, this is a typical setup:
 ```
-nf-trim-merged-unmerged/  
+nf-trim-generode/  
 ├── data/  
 │   ├── reference/         # Reference genome FASTA, .fai, .dict, and all BWA index layers  
 │   └── symlinks/          # Symbolic links pointing to raw paired-end sequence files  
@@ -242,44 +242,51 @@ nextflow run main.nf \
 Outputs are written to `params.outdir` (default: `./results`):
 ```
 results/
-├── amber/               # AMBER alignment quality plots (.pdf) and summary stats (.txt)
-├── data/
+├── depth/               # Average coverage depth stats over target regions (.dpstats.txt)
+├── large_data/          # Large intermediate and primary alignment/reference outputs:
+│   ├── amber/           # AMBER alignment quality plots (.pdf) and summary stats (.txt)
 │   ├── bam/             # Final sorted, deduplicated, and indel-realigned BAM and BAI files
 │   ├── bam_rescaled/    # Post-mapDamage base-quality rescaled BAM and BAI files (historical)
+│   ├── fastp/           # Fastp HTML and JSON trimming reports
 │   ├── fastq/           # Length-trimmed/split modern FASTQ files
-│   └── reference/       # Masking tracks (.combined_mask.bed) and ANGSD site index files:
-│                        #   ├── <ref>.repma.angsd.txt (.idx, .bin)
-│                        #   ├── <ref>.regions
-│                        #   └── <ref>.chrs
+│   ├── fastqc/          # FastQC reports (.html, .zip) for merged reads and for trimmed unmerged reads
+│   ├── mapdamage/       # mapDamage postmortem damage plots (.pdf) and statistic logs (.txt)
+│   └── reference/       # Masking tracks (.combined_mask.bed, .combined_exclusions.bed, .inclusion.bed) and ANGSD site index files:
+│       │                #   ├── .repma.angsd.txt (.idx, .bin)
+│       │                #   ├── .regions
+│       │                #   └── .chrs
 │       └── modeler/     # De novo repeat library (consensi.fa, families.stk)
-├── depth/               # Average coverage depth stats over target regions (.dpstats.txt)
-├── fastp/               # Fastp HTML and JSON trimming reports
-├── fastqc/              # FastQC reports (.html, .zip) for trimmed reads
-├── mapdamage/           # mapDamage postmortem damage plots (.pdf) and statistic logs (.txt)
-└── stats/               # Calculated historical average read length (historical_trimlength.txt)
+├── stats/               # Calculated historical average read length (historical_trimlength.txt)
 │   ├── contig_depth_summary.tsv  # Mean sequencing depth broken down per contig
 │   └── individual/      # Per-sample metric breakdown lines
 └── summary_reports/     # Master summary tables and all publication-ready QC figures:
     ├── individual_sequencing_summary_table.csv
-    ├── plot1_depth_by_individual_histogram.pdf
-    ├── plot2_depth_by_contig_histogram.pdf
-    ├── plot4_amber_read_length_distribution.pdf
-    ├── plot5_amber_mismatch_frequencies.pdf
-    └── plot6_mapdamage_overlay.pdf
+    ├── depth_by_individual_histogram.pdf
+    ├── depth_by_contig_histogram.pdf
+    ├── amber_read_length_distribution.pdf
+    ├── amber_mismatch_frequencies.pdf
+    ├── mapdamage_overlay.png
+    ├── individual_summary_metrics_boxplots.png
+    ├── genome_masking_summary_bar.png      # Optional: generated when both repeat and paralog BEDs are present
+    └── genome_masking_manhattan.png        # Optional: generated when repeat and/or paralog BEDs are present
 ```
 
 ### Summary Reports & Plots
 
-The pipeline automatically generates a consolidated summary table and six diagnostic QC plots in `${params.outdir}/summary_reports/`:
+The pipeline automatically generates consolidated summary tables and up to eight diagnostic QC plots in `${params.outdir}/summary_reports/`:
 
-1. **`plot1_depth_by_individual_histogram.pdf`**: Histogram of average sequencing depth across all individuals, colored by era (historical vs. modern).
-2. **`plot2_depth_by_contig_histogram.pdf`**: Distribution of average coverage depth across all assembly contigs.
-3. **`individual_sequencing_summary_table.csv`**: Comprehensive per-sample metrics table including `total_seqs`, `total_mapped`, `total_uniq`, `total_MQ25`, `endogenous`, `complexity`, `grr`, `total_cov`, and read length metrics (`read_min`, `read_max`, `read_median`, `read_mean`).
-4. **`plot4_amber_read_length_distribution.pdf`**: AMBER overlay plot showing read length distributions (% reads vs. bp) per sample, grouped by era.
-5. **`plot5_amber_mismatch_frequencies.pdf`**: AMBER overlay plot of mismatch frequencies vs. distance from read ends, panelled by mutation type (`CpG to TpG`, `C to T`, and `Other`).
-6. **`plot6_mapdamage_overlay.pdf`**: mapDamage damage curves comparing historical vs. modern cohorts across 6 mutation categories (`C to T`, `G to A`, `Soft-clipped bases`, `Deletions`, `Insertions`, and `Other substitutions`).
+1. **`individual_sequencing_summary_table.csv`**: Comprehensive per-sample metrics table including `total_seqs`, `total_mapped`, `total_uniq`, `total_MQ<bam_q>` (e.g., `total_MQ25`), `endogenous`, `complexity`, `grr`, `total_cov`, and read length metrics (`read_min`, `read_max`, `read_median`, `read_mean`).
+2. **`contig_depth_summary.tsv`**: Mean sequencing depth per assembly contig, separated by era (modern vs. historical).
+3. **`depth_by_individual_histogram.png`**: Log10-scaled histogram of average sequencing depth across all individuals, colored by era (historical vs. modern).
+4. **`depth_by_contig_histogram.png`**: Log10-scaled distribution of average coverage depth across all assembly contigs.
+5. **`amber_read_length_distribution.png`**: AMBER overlay plot showing read length distributions (% reads vs. bp) per sample, grouped by era.
+6. **`amber_mismatch_frequencies.png`**: AMBER overlay plot of mismatch frequencies vs. distance from read ends, panelled by mutation type (`CpG to TpG`, `C to T`, and `Other`).
+7. **`mapdamage_overlay.png`**: mapDamage damage curves for historical samples across three mutation categories (`C to T`, `G to A`, and `Soft-clipped bases`).
+8. **`individual_summary_metrics_boxplots.png`**: 12-panel boxplot comparing all per-sample summary metrics between historical and modern cohorts.
+9. **`genome_masking_summary_bar.png`** (_conditional_): Bar plot comparing total genome masked (in Mb) across RepeatMasker, Paralog Mask, and Overlap (Both). Generated only when both repeat/CpG and custom/paralog exclusion BED files are supplied.
+10. **`genome_masking_manhattan.png`** (_conditional_): Genome-wide track plot showing masked intervals across chromosomes/contigs (labeling up to the 25 largest contigs when >30 are present). Generated whenever a repeat/CpG mask BED and/or paralog exclusion BED is supplied.
 
-The histograms of depth can be useful. Very low depth individuals (perhaps <1x) may constrain the callable fraction of the genome in the `nf-angsd-selection` pipeline, and we recommend considering them for removal. Contigs with substantially lower or higher depth than the rest could indicate contamination, mtDNA, or repetitive regions. The AMBER and MAPDAMAGE summary plots help to identify historical DNA damage patterns.
+The histograms of depth can be useful. Very low depth individuals (perhaps <1x) may constrain the callable fraction of the genome in the nf-angsd-selection pipeline, and we recommend considering them for removal. Contigs with substantially lower or higher depth than the rest could indicate contamination, mtDNA, or repetitive regions. The AMBER and mapDamage summary plots help to identify historical DNA damage patterns, while the genome masking plots verify how much of the assembly is excluded from downstream ANGSD analyses and whether repeat and paralog tracks overlap.
 
 ## Software Stack
 The pipeline uses:
