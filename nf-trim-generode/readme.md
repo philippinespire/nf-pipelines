@@ -258,7 +258,7 @@ bash test_data/prep_test_ref.sh
 # 2. Launch the validation run using the built-in test profile
 module load container_env nextflow
 nextflow run main.nf -profile test,wahab -resume
-
+```
 
 `run_test.sh` skips de novo `RepeatModeler`/`RepeatMasker` (`--run_repeatmasking false`) using `test_data/reference/test_repeats.bed` so the test finishes quickly.
 
