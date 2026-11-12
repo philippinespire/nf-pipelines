@@ -266,12 +266,13 @@ Across the 34,500 bp of non-masked reference sequence (`test_ref.inclusion.bed`,
 
 * Derived historical trim length (`test_data/results/stats/historical_trimlength.txt`): ~74 bp ($\le 80\text{ bp}$), automatically triggering Pass 2 remapping with `bwa aln`.
 * Per-sample mean depth (`test_data/results/depth/*.dpstats.txt` and `total_cov` in `test_data/results/summary_reports/individual_sequencing_summary_table.csv`):
+
 | Sample | Era | Raw Read Pairs | Expected Mean Depth (total_cov) |
 | --- | --- | --- | --- |
 |Hist01|historical|350|~0.60× (0.55–0.65×)|
-|Hist02|historical520|~0.89× (0.83–0.95×)|
+|Hist02|historical|520|~0.89× (0.83–0.95×)|
 |Mod01|modern|400|~1.12× (1.05–1.19×)|
-|Mod02|modern|600~1.68× (1.59–1.77×)|
+|Mod02|modern|600|~1.68× (1.59–1.77×)|
 
 * Era-level contig depth (`test_data/results/summary_reports/contig_depth_summary.tsv`): ~0.75× for historical and ~1.40× for modern across each contig (chr1, chr2, chr3).
 
