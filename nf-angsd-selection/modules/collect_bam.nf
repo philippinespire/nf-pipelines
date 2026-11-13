@@ -10,7 +10,7 @@ process COLLECT_BAM_ALL {
 
     script:
     """
-    printf '%s\\n' ${bams.join(' ')} | head -c -1> bamlist.txt
+    printf '%s\\n' ${bams.join(' ')} > bamlist.txt
     """
 }
 
@@ -27,6 +27,6 @@ process COLLECT_BAM_POP {
 
     script:
     """
-    printf '%s\\n' ${bams.join(' ')} | head -c -1 > ${pop}.${era}.bamlist.txt
+    printf '%s\\n' ${bams.join(' ')} > ${pop}.${era}.bamlist.txt
     """
 }

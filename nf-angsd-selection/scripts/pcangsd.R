@@ -13,14 +13,17 @@
 #
 # INPUT ARGUMENTS:
 #   --cov         Path to space-separated PCAngsd output covariance matrix (.cov)
-#   --samplesheet CSV file containing metadata. Must include 'sample', 'pop', and 
-#                 'era' (historic/modern) columns matching matrix row order.
+#   --samplesheet CSV file containing metadata. Must include 'sample', 'pop', 
+#                 'era' (historic/modern), and 'region' columns matching matrix row order.
 #   --out         Target PNG file path for saved PCA plots
 #   --species     [Optional] Name of target species for main plot title 
 #                 (Default: "Species")
 #
 # OUTPUTS:       PNG containing a two-panel scatter plot (PC1/PC2 & PC2/PC3).
 # ==============================================================================
+
+# Force headless PNG rendering without X11
+options(bitmapType = "cairo")
 
 args <- commandArgs(trailingOnly = TRUE)
 
@@ -33,8 +36,10 @@ samplesheet    <- alist$samplesheet
 species        <- if (!is.null(alist$species)) alist$species else "Species"
 out_png        <- alist$out
 
-# read samplesheet; expect columns: sample, pop, bam, era (historic|modern)
+# read samplesheet; expect columns: sample, pop, bam, era (historic|modern), region
 meta <- read.csv(samplesheet, header = TRUE)
+meta$region <- trimws(meta$region)
+meta$era <- tolower(trimws(meta$era))
 
 C <- as.matrix(read.table(cov_path))
 e <- eigen(C)
@@ -52,17 +57,23 @@ colours_colorblind <- c(
   "#999933", "#661100"
 )
 
-uniq_pops <- unique(meta$pop)
-n_pops <- length(uniq_pops)
-pop_palette <- setNames(colours_colorblind[1:n_pops], uniq_pops)
-col_vec <- pop_palette[meta$pop]
+uniq_regs <- unique(meta$region)
+n_regs <- length(uniq_regs)
+pal_colors <- if (n_regs <= length(colours_colorblind)) {
+  colours_colorblind[seq_len(n_regs)]
+} else {
+  colorRampPalette(colours_colorblind)(n_regs)
+}
+reg_palette <- setNames(pal_colors, uniq_regs)
+col_vec <- reg_palette[meta$region]
 
 # Assign shapes by era (historic vs modern)
-shape_map <- c(historic = 24, modern = 21)
+shape_map <- c(historic = 24, historical = 24, hist = 24, era1 = 24,
+               modern = 21, mod = 21, era2 = 21)
 pch_vec <- shape_map[meta$era]
 
 
-png(out_png, width = 10, height = 5, units = "in", res = 300)
+png(out_png, width = 10, height = 5, units = "in", res = 300, type = "cairo")
 layout(matrix(1:2, 1, 2, byrow = TRUE), respect = TRUE)
 par(oma = c(0, 0, 3, 0))
 par(pty = "s")
@@ -76,10 +87,17 @@ plot(e$vectors[, 1:2],
      ylab = paste("PC2 ", round(pc2_variance, 2), "%"))
 
 legend("topleft",
-       legend = uniq_pops,
-       pt.bg = pop_palette[uniq_pops],
+       legend = uniq_regs,
+       pt.bg = reg_palette[uniq_regs],
        pch = 21,
        cex = 0.8)
+
+legend("bottomleft",
+       legend = c("Historic", "Modern"),
+       pt.bg = "grey70",
+       pch = c(24, 21),
+       cex = 0.8,
+       title = "Era")
 
 plot(e$vectors[, 2:3],
      bg = col_vec,

@@ -112,6 +112,8 @@ process ANGSD_GL_POP {
     tag { "${pop}_${era}" }
     publishDir "${params.outdir}/large_data/saf",  mode: 'copy', pattern: "*.saf*"
     publishDir "${params.outdir}/large_data/mafs", mode: 'copy', pattern: "*.mafs.gz"
+    publishDir "${params.outdir}/large_data/counts", mode: 'copy', pattern: "*.counts.gz"
+    publishDir "${params.outdir}/large_data/snpstat", mode: 'copy', pattern: "*.snpStat.gz"
 
     input:
     tuple val(pop), val(era), path(bamlist)
@@ -121,6 +123,8 @@ process ANGSD_GL_POP {
     output:
     tuple val(pop), val(era), path("${pop}_${era}.saf.gz"), path("${pop}_${era}.saf.idx"), path("${pop}_${era}.saf.pos.gz"), emit: saf_files
     path "${pop}_${era}.mafs.gz", emit: mafs
+    path "${pop}_${era}.counts.gz", emit: counts
+    path "${pop}_${era}.snpStat.gz", emit: snpstat
 
     script:
     """
@@ -129,8 +133,10 @@ process ANGSD_GL_POP {
         -GL 1 \
         -doMajorMinor 4 \
         -doMaf 1 \
+        -dosnpstat 1 \
+        -doHWE 1 \
         -minMapQ 25 -minQ 30 \
-        -doCounts 1 -doDepth 1 -dumpCounts 1 \
+        -doCounts 1 -doDepth 1 -dumpCounts 4 \
         -uniqueOnly 1 -remove_bads 1 \
         -P ${task.cpus} \
         -ref "$ref" \
@@ -138,5 +144,10 @@ process ANGSD_GL_POP {
         -sites ${intersect_snps} \
         -out ${pop}_${era} \
         -noTrans 1
+
+    # Force process failure if ANGSD outputs are truncated or corrupted
+    gzip -t ${pop}_${era}.mafs.gz
+    gzip -t ${pop}_${era}.saf.gz
+    gzip -t ${pop}_${era}.snpStat.gz
     """
 }

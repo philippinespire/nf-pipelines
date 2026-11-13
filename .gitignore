@@ -50,13 +50,21 @@ nf-trim-generode/results/mapdamage/
 nf-trim-generode/results/amber/
 nf-angsd-selection/results/large_data/
 
-# Special handling for nf-trim-generode input (small files)
+# Special handling for small input files
+!nf-paralog/inputfiles/*.csv
 !nf-trim-generode/inputfiles/*.csv
+!nf-angsd-selection/inputfiles/*.csv
+!nf-angsd-selection/inputfiles/*.txt
 
-# Special handling for nf-trim-generode test dataset
+# Special handling for test datasets
 !nf-trim-generode/test_data/
 !nf-trim-generode/test_data/raw_reads/*.fastq.gz
 !nf-trim-generode/test_data/reference/test_ref.fasta
 !nf-trim-generode/test_data/reference/test_ref.fasta.fai
 nf-trim-generode/test_data/results/
 nf-trim-generode/test_data/results/large_data/
+!nf-angsd-selection/test_data/
+nf-angsd-selection/test_data/bams/
+nf-angsd-selection/test_data/*.txt
+nf-angsd-selection/test_data/*.csv
+nf-angsd-selection/test_data/*.config

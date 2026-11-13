@@ -23,30 +23,33 @@ process RUN_ACER {
     done
 
     # 2. Parse sample CSV to construct --hist_mafs, --mod_mafs, and --region_names CLI arguments
-    # Expects columns: sample, region, era, region
-    HIST_MAFS=\$(Rscript -e '
-        df <- read.csv("${samplesheet}")
+    read -r HIST_MAFS MOD_MAFS REGIONS <<< \$(Rscript -e '
+        df <- read.csv("${samplesheet}", stringsAsFactors = FALSE)
+        df\$region <- trimws(df\$region)
+        df\$era_norm <- tolower(trimws(df\$era))
+        hist_set <- c("historic", "historical", "hist", "era1")
+        mod_set  <- c("modern", "mod", "era2")
+
         regs <- unique(df\$region)
-        hist_files <- sapply(regs, function(r) {
-            era <- df\$era[df\$region == r & tolower(df\$era) %in% c("historic", "historical", "hist", "era1")][1]
+        paired_regs <- Filter(function(r) {
+            any(df\$region == r & df\$era_norm %in% hist_set) &&
+            any(df\$region == r & df\$era_norm %in% mod_set)
+        }, regs)
+
+        if (length(paired_regs) == 0) {
+            stop("No regions with both historic and modern samples found in samplesheet.")
+        }
+
+        hist_files <- sapply(paired_regs, function(r) {
+            era <- df\$era_norm[df\$region == r & df\$era_norm %in% hist_set][1]
             paste0("var_", r, "_", era, ".mafs.gz")
         })
-        cat(paste(hist_files, collapse=","))
-    ')
-
-    MOD_MAFS=\$(Rscript -e '
-        df <- read.csv("${samplesheet}")
-        regs <- unique(df\$region)
-        mod_files <- sapply(regs, function(r) {
-            era <- df\$era[df\$region == r & tolower(df\$era) %in% c("modern", "mod", "era2")][1]
+        mod_files <- sapply(paired_regs, function(r) {
+            era <- df\$era_norm[df\$region == r & df\$era_norm %in% mod_set][1]
             paste0("var_", r, "_", era, ".mafs.gz")
         })
-        cat(paste(mod_files, collapse=","))
-    ')
 
-    REGIONS=\$(Rscript -e '
-        df <- read.csv("${samplesheet}")
-        cat(paste(unique(df\$region), collapse=","))
+        cat(paste(hist_files, collapse=","), paste(mod_files, collapse=","), paste(paired_regs, collapse=","), "\n")
     ')
 
     # 3. Execute ACER iterative selection scan
@@ -61,31 +64,5 @@ process RUN_ACER {
         --max_rounds=${params.max_rounds} \\
         --n_boot=${params.n_boot} \\
         --min_ind=${params.min_ind}
-    """
-}
-
-process FILTER_NEUTRAL_SITES {
-    tag "Extract Neutral Sites"
-    publishDir "${params.outdir}/sites", mode: 'copy'
-
-    input:
-    path sites_snps          // Full polymorphic sites.snps file
-    path cmh_results         // final_cmh_results_full.tsv from ACER
-
-    output:
-    path "neutral_sites.snps", emit: snps
-    path "neutral_sites.bin" , emit: bin
-    path "neutral_sites.idx" , emit: idx
-
-    script:
-    """
-    # 1. Extract CHR and BP of candidate loci under selection (FDR <= cutoff)
-    awk -v fdr="${params.fdr_cutoff}" 'NR>1 && \$NF <= fdr {print \$1"\t"\$2}' ${cmh_results} > selected_coords.txt
-
-    # 2. Exclude selected loci from full sites file
-    awk 'NR==FNR {selected[\$1"\t"\$2]; next} !((\$1"\t"\$2) in selected)' selected_coords.txt ${sites_snps} > neutral_sites.snps
-
-    # 3. Re-index neutral sites for ANGSD
-    angsd sites index neutral_sites.snps
     """
 }

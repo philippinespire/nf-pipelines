@@ -1,9 +1,39 @@
+process CALC_ALL_THRESHOLDS {
+    tag "All Samples Thresholds"
+
+    input:
+    path bamlist
+    path bed_file
+
+    output:
+    tuple env(min_ind), env(max_depth), emit: thresholds
+
+    script:
+    """
+    target_bp=\$(awk 'BEGIN{s=0} {s += \$3 - \$2 + 1} END{print s}' ${bed_file})
+
+    total_bases=0
+    while read -r bam; do
+        n_reads=\$(samtools idxstats "\$bam" | awk '{s+=\$3} END{print s}')
+        read_len=\$(samtools view "\$bam" | head -n 1000 | awk 'NR>0 {s+=length(\$10); c++} END{if(c>0) print int(s/c); else print 100}')
+        total_bases=\$(awk -v tb="\$total_bases" -v nr="\$n_reads" -v rl="\$read_len" 'BEGIN{print tb + (nr * rl)}')
+    done < ${bamlist}
+
+    n_ind=\$(wc -l < ${bamlist})
+    min_ind=\$(awk -v n="\$n_ind" -v f="${params.min_ind_frac}" 'BEGIN{print int(n * f + 0.999)}')
+    
+    mean_combined_depth=\$(awk -v tb="\$total_bases" -v tbp="\$target_bp" 'BEGIN{print tb / tbp}')
+    max_depth=\$(awk -v md="\$mean_combined_depth" -v m="${params.max_depth_mult}" 'BEGIN{print int(md * m + 0.999)}')
+    """
+}
+
 process ANGSD_GL_ALL {
     tag "$contigs"
 
     input:
     val contigs
     path bamlist
+    tuple val(min_ind), val(max_depth)
     tuple path(sites_pos), path(sites_bin), path(sites_idx) // Accepts bundled files
     tuple path(ref), path(ref_fai)
 
@@ -13,25 +43,6 @@ process ANGSD_GL_ALL {
 
     script:
     """
-    # 1. Total target length from BED file
-    target_bp=\$(awk 'BEGIN{s=0} {s += \$3 - \$2 +1} END{print s}' ${params.bed_file})
-
-    # 2. Calculate total mapped bases across all BAMs in bamlist using index files
-    total_bases=0
-    while read -r bam; do
-        n_reads=\$(samtools idxstats "\$bam" | awk '{s+=\$3} END{print s}')
-        read_len=\$(samtools view "\$bam" | head -n 1000 | awk 'NR>0 {s+=length(\$10); c++} END{if(c>0) print int(s/c); else print 100}')
-        total_bases=\$(awk -v tb="\$total_bases" -v nr="\$n_reads" -v rl="\$read_len" 'BEGIN{print tb + (nr * rl)}')
-    done < ${bamlist}
-
-    # 3. Calculate observed combined depth across all samples and set max_depth cutoff
-    n_ind=\$(wc -l < ${bamlist})
-    min_ind=\$(awk -v n="\$n_ind" -v f="${params.min_ind_frac}" 'BEGIN{print int(n * f + 0.999)}')
-    
-    mean_combined_depth=\$(awk -v tb="\$total_bases" -v tbp="\$target_bp" 'BEGIN{print tb / tbp}')
-    max_depth=\$(awk -v md="\$mean_combined_depth" -v m="${params.max_depth_mult}" 'BEGIN{print int(md * m + 0.999)}')
-
-    # 4. Run ANGSD
     angsd -bam ${bamlist} \
         -GL 1 \
         -doGlf 2 \
@@ -44,7 +55,7 @@ process ANGSD_GL_ALL {
         -uniqueOnly 1 -remove_bads 1 \
         -skipTriallelic 0 \
         -doCounts 1 -doDepth 1 -dumpCounts 1 \
-        -noTrans 1 \
+        -rmTrans 1 \
         -P ${task.cpus ?: 8} \
         -ref ${ref} \
         -sites ${sites_pos} \

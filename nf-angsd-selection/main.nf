@@ -22,7 +22,7 @@ params.fst_window = 50000    // Window size in bp for sliding window FST calcula
 params.fst_step   = 10000    // Step size in bp for sliding window FST calculations (default 10000)
 
 // import modules
-include { ANGSD_GL_ALL; ANGSD_COLLECT_OUTPUT; ANGSD_EXTRACT_SITES; INDEX_BED_SITES  } from './modules/angsd_gl.nf'
+include { CALC_ALL_THRESHOLDS; ANGSD_GL_ALL; ANGSD_COLLECT_OUTPUT; ANGSD_EXTRACT_SITES; INDEX_BED_SITES } from './modules/angsd_gl.nf'
 include { COLLECT_BAM_ALL; COLLECT_BAM_POP                                          } from './modules/collect_bam.nf'
 include { PCANGSD; PLOT_PCANGSD; PLOT_ADMIXTURE                                     } from './modules/pcangsd.nf'
 include { CALC_POP_THRESHOLDS; QC_POP_SITES_CONTIG; GATHER_POP_SITES                } from './modules/angsd_gl_pop.nf'
@@ -32,6 +32,7 @@ include { LD_PRUNE_CONTIG; MERGE_PRUNED_SITES; SUBSET_BEAGLE                    
 include { PREPARE_SITE_SETS                                                         } from './modules/filter_sites.nf'
 include { RUN_ACER                                                                  } from './modules/acer.nf'
 include { ANGSD_FST; PLOT_SFS_SUMMARY                                               } from './modules/angsd_fst.nf'
+include { EVALUATE_QC_BIAS                                                          } from './modules/qc_bias.nf'
 
 // Workflow 
 workflow {
@@ -41,7 +42,7 @@ workflow {
     samples = Channel
         .fromPath(params.samplesheet, checkIfExists: true)
         .splitCsv(header: true)
-        .map { row -> tuple(row.sample, row.pop, row.era, row.region, row.bam) }
+        .map { row -> tuple(row.sample.trim(), row.pop.trim(), row.era.trim().toLowerCase(), row.region.trim(), row.bam.trim()) }
 
     all_bams = samples
         .map { sample, pop, era, region, bam -> bam }
@@ -104,7 +105,8 @@ workflow {
     
     // 7. Run ANGSD_GL_ALL to identify SNPs (uses SNP_pval 1e-6)
     // only consider the sites that pass the depth and minind QC filters in both historical and modern populations (i.e. the intersected site set)
-    genotypes = ANGSD_GL_ALL(contigs, bamlist.first(), ch_intersect_bundle.first(), ch_ref)
+    all_thresholds = CALC_ALL_THRESHOLDS(bamlist, file(params.bed_file))
+    genotypes = ANGSD_GL_ALL(contigs, bamlist.first(), all_thresholds.thresholds.first(), ch_intersect_bundle.first(), ch_ref)
 
     mafs = genotypes.mafs.map { contig, file -> file }.collect()
     beagle = genotypes.beagle.map { contig, file -> file }.collect()
@@ -149,12 +151,11 @@ workflow {
     PLOT_PCANGSD(pcangsd_results.pcangsd_cov, file(params.samplesheet))
     PLOT_ADMIXTURE(pcangsd_results.q_matrix, file(params.samplesheet))
 
-    // 12. Diversity Calculations (Runs on all callable neutral loci)
-    ch_div_neutral     = PREPARE_SITE_SETS.out.callable_neutral_bundle.map { bundle -> tuple('neutral', bundle) }
-    ch_div_all_snps    = PREPARE_SITE_SETS.out.all_snps_bundle.map { bundle -> tuple('all_snps', bundle) }
-    ch_div_snps_pruned = PREPARE_SITE_SETS.out.snps_pruned_bundle.map { bundle -> tuple('snps_pruned', bundle) }
+    // 12. Diversity Calculations (Runs on all callable loci and putatively neutral callable loci)
+    ch_div_all_callable     = PREPARE_SITE_SETS.out.all_callable_bundle.map { bundle -> tuple('all_callable', bundle) }
+    ch_div_callable_neutral = PREPARE_SITE_SETS.out.callable_neutral_bundle.map { bundle -> tuple('callable_neutral', bundle) }
 
-    ch_div_site_sets = ch_div_neutral.concat(ch_div_all_snps, ch_div_snps_pruned)
+    ch_div_site_sets = ch_div_all_callable.concat(ch_div_callable_neutral)
 
     // Combine population SAF files with diversity site bundles
     ch_div_inputs = ANGSD_GL_POP.out.saf_files.combine(ch_div_site_sets)
@@ -183,7 +184,7 @@ workflow {
         file("${projectDir}/scripts/plot_tp.R")
     )
 
-    // 13. Calc historic-modern FST (Runs on neutral, all_snps, and snps_pruned)
+    // 13. Calc historic-modern FST and 2D SFS (Runs on all callable loci and putatively neutral callable loci)
     ch_saf_hist = ANGSD_GL_POP.out.saf_files
         .filter { region, era, saf, idx, pos -> era.toLowerCase() in ['historic', 'historical', 'hist', 'era1'] }
         .map { region, era, saf, idx, pos -> tuple(region, saf, idx, pos) }
@@ -194,11 +195,10 @@ workflow {
 
     ch_fst_pairs = ch_saf_hist.join(ch_saf_mod)
 
-    ch_fst_neutral     = PREPARE_SITE_SETS.out.snps_pruned_neutral_bundle.map { bundle -> tuple('neutral', bundle) }
-    ch_fst_all_snps    = PREPARE_SITE_SETS.out.all_snps_bundle.map { bundle -> tuple('all_snps', bundle) }
-    ch_fst_snps_pruned = PREPARE_SITE_SETS.out.snps_pruned_bundle.map { bundle -> tuple('snps_pruned', bundle) }
+    ch_fst_all_callable     = PREPARE_SITE_SETS.out.all_callable_bundle.map { bundle -> tuple('all_callable', bundle) }
+    ch_fst_callable_neutral = PREPARE_SITE_SETS.out.callable_neutral_bundle.map { bundle -> tuple('callable_neutral', bundle) }
 
-    ch_fst_site_sets = ch_fst_neutral.concat(ch_fst_all_snps, ch_fst_snps_pruned)
+    ch_fst_site_sets = ch_fst_all_callable.concat(ch_fst_callable_neutral)
 
     ch_fst_inputs = ch_fst_pairs.combine(ch_fst_site_sets)
 
@@ -211,5 +211,14 @@ workflow {
 
     // Generate SFS comparison plot across all regions
     PLOT_SFS_SUMMARY(ANGSD_FST.out.sfs_2d.collect())
+
+    // Evaluate Ts/Tv, Reference Bias, and Strand Bias across Eras (restricted to called SNPs)
+    EVALUATE_QC_BIAS(
+        ANGSD_GL_POP.out.mafs.collect(),
+        ANGSD_GL_POP.out.counts.collect(),
+        ANGSD_GL_POP.out.snpstat.collect(),
+        PREPARE_SITE_SETS.out.all_snps,
+        file(params.samplesheet)
+    )
     
 }

@@ -97,8 +97,8 @@ p <- ggplot(df_combined, aes(x = Frequency, y = Density, color = Timepoint, line
   scale_linetype_manual(values = c("Historical" = "solid", "Modern" = "solid")) +
   facet_wrap(~ Title, scales = "free", ncol = num_cols) +
   labs(
-    title = "Site Frequency Spectrum Comparison: Neutral SNPs",
-    x = "Derived Allele Frequency (excl. fixed sites)",
+    title = "Site Frequency Spectrum Comparison: Historical vs. Modern",
+    x = "Non-Reference Allele Frequency (excl. fixed sites)",
     y = "Probability Density (Area = 1.0)",
     color = "Timepoint",
     linetype = "Timepoint"

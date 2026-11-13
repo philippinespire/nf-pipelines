@@ -1,7 +1,7 @@
 ## Overview of nf-angsd-selection
 This is in beta testing. It runs fine, though it may have undiscovered bugs!
 
-This pipeline is for genotyping and basic pop gen analyses from temporal genomic lcWGS data. It calls probabilistic genotypes with ANGSD (excluding transitions), runs (optional) chi-squared selection scans from data across two time-points, does (optional) ld-pruning, calculates diversity estimates within the ANGSD framework on all putatively neutral sites (including monomorphic sites), and then makes PCA and admixture plots and calculates Fst with ANGSD on putatively neutral ld-pruned sites. It only considers sites that meet minimum individual and maximum depth limits in each of the population-eras (set as a fraction and a multiplier, respectively, of the full number of individuals and the total average depth across all individuals).
+This pipeline is for genotyping and basic pop gen analyses from temporal genomic lcWGS data. It calls probabilistic genotypes with ANGSD (excluding transitions), runs (optional) chi-squared selection scans from data across two time-points, does (optional) ld-pruning, calculates diversity estimates within the ANGSD framework on both all callable sites (`all_callable`) and putatively neutral callable sites (`callable_neutral`, including monomorphic sites), and makes PCA and admixture plots on putatively neutral ld-pruned SNPs (`snps_pruned_neutral`). It only considers sites that meet minimum individual and maximum depth limits in each of the population-eras (set as a fraction and a multiplier, respectively, of the full number of individuals and the total average depth across all individuals). 
 
 It is written in Nextflow DSL2 and designed to be run on Old Dominion WAHAB cluster (use `-profile wahab`). The pipeline starts from BAM files, such as those output by nf-trim-generode. It was developed from nf-angsd-diversity by Malin Pinsky (August 2026) with plenty of help from Gemini.
 
@@ -48,7 +48,7 @@ Important:
 
 If you want to use mapdamage-rescaled BAM files for historical samples (eg, from Generode or nf-trim-generode), point to those files in this input file.
 
-Think carefully about which individuals to use. It may be useful to remove very low-depth individuals (e.g., <1x or <0.5x) based, for example, on `results/summary_reports/plot1_depth_by_individual_histogram.pdf` from `nf-trim-generode`. If low-depth individuals are included, consider reducing `min_ind_frac` so that lots of loci are not removed.
+Think carefully about which individuals to use. It may be useful to remove very low-depth individuals (e.g., <1x or <0.5x) based, for example, on `results/summary_reports/depth_by_individual_histogram.pdf` from `nf-trim-generode`. If low-depth individuals are included, consider reducing `min_ind_frac` so that lots of loci are not removed.
 
 
 ### BED file
@@ -64,7 +64,7 @@ awk '{print $1"\t"$2+1"\t"$3}' ./path/to/reference/reference.repma.bed > ./path/
 angsd sites index ./path/to/reference/reference.repma.angsd.txt
 ```
 
-Think carefully about which contigs to use. It may be useful to remove very low-depth or high-depth contigs based, for example, on `results/summary_reports/plot2_depth_by_contig_histogram.pdf` from `nf-trim-generode`. These could be mtDNA, paralogs, or not from the target species.
+Think carefully about which contigs to use. It may be useful to remove very low-depth or high-depth contigs based, for example, on `results/summary_reports/depth_by_contig_histogram.pdf` from `nf-trim-generode`. These could be mtDNA, paralogs, or not from the target species.
 
 
 ### Contig file
@@ -82,7 +82,7 @@ In the `main.nf` file, adjust the file paths for your project's reference and be
 In addition, the following parameters should be defined:
 * `min_ind_frac`: The fraction of individuals that have to be represented at a locus/site to use it. This is applied per region-era and the intersection of the passing loci in each region-era is used (default 0.7)
 * `max_depth_mult`: The multiple of the average depth to use as a ceiling in order to include a locus/site. This filter is applied per region-era and the intersection of the passing loci in each region-era is used (default 10)
-* `ld_prune`: Whether to prune out loci in linkage disequilibrium (often a good idea). The PCA, admixture, and FST calculations will then use the LD-pruned set of loci (default true).
+* `ld_prune`: Whether to prune out loci in linkage disequilibrium (often a good idea). The PCA and admixture calculations will then use the LD-pruned neutral SNP set (default true).
 * `max_kb_dist`: LD pruning uses a sliding window to test for disequilibrium. This sets the window width. Narrower will run faster, wider will run more slowly (default 50)
 * `min_weight`: Loci that are correlated (r2) more than this threshold will be trimmed out (default 0.2)
 * `run_selection`: Whether to run chi-squared selection scan (default true)
@@ -157,6 +157,30 @@ The `nextflow.config` file holds the profiles you can choose, so that you can us
 If everything went well, the pipeline will run and submit jobs to the queue. 
 On the first run, a new conda environment will be created. This can take some time.
 
+### Test dataset
+A script to create a test dataset is included. It needs samtools available, so to run it on an interactive node on Wahab:
+```
+salloc
+bash
+module load container_env samtools
+mkdir -p /tmp/$USER/bin
+echo -e '#!/bin/bash\nexec crun.samtools samtools "$@"' > /tmp/$USER/bin/samtools
+chmod +x /tmp/$USER/bin/samtools
+export PATH="/tmp/$USER/bin:$PATH"
+python3 test_data/make_test_dataset.py
+exit # to leave the salloc
+```
+This will create test data files in `test_data/`
+
+Then run it in a tmux shell, eg:
+```
+tmux a -t nextflow
+bash
+module load container_env nextflow/23.10.1
+nextflow run main.nf -profile wahab -c test_data/test.config -resume
+```
+
+
 ## Output
 ## Pipeline Output Directory Structure
 
@@ -170,10 +194,12 @@ results/
 ├── PCAngsd/                   # Population structure (PCA & Admixture)
 ├── diversity/                 # Summary nucleotide diversity statistics and comparison plots
 ├── fst/                       # Global FST values, SFS plot, and Manhattan plots
+├── qc_bias/                   # Sequencing bias diagnostics (reference bias, strand bias)
 └── large_data/                # Large binary, intermediate, and site library files (Ignored by git)
     ├── sites/                 # Base coordinate indices, region mappings, and processed site libraries
     ├── beagle/                # Individual genotype likelihood matrices
     ├── mafs/                  # Point allele frequency tables
+    ├── counts/                # Per-site allele count matrices
     ├── saf/                   # Population sample allele frequency distributions
     ├── thetas/                # Per-site nucleotide diversity estimates
     └── fst/                   # Binary FST indices, 2D SFS matrices, and windowed FST tables
@@ -205,18 +231,22 @@ Contains population structure and individual admixture results derived from LD-p
 * **`${params.species}.admixture.pdf`**: Stacked bar plot displaying individual admixture proportions.
 
 #### 5. `diversity/`
-Summary nucleotide diversity files calculated across all callable neutral loci (monomorphic + polymorphic).
-* **`${region}_${era}.sfs`**: Folded site frequency spectrum (SFS) calculated across callable neutral sites.
-* **`${region}_${era}.pestPG`**: Windowed summary statistics generated by `thetaStat`, including pairwise nucleotide diversity ($\pi$), Watterson's $\theta$, and Tajima's $D$.
-* **`pi_summary_${region}.tsv`**: Summary table of mean nucleotide diversity ($\pi / \theta_P$) with 95% bootstrap confidence intervals across eras.
-* **`pi_historic_vs_modern_${region}.png`**: Comparison plot of historic vs. modern nucleotide diversity per region.
+Summary nucleotide diversity files calculated across all callable loci (`all_callable`) and putatively neutral callable loci (`callable_neutral`), including both monomorphic and polymorphic sites, indicated by `${label}`.
+* **`${region}_${era}_${label}.sfs`**: Folded site frequency spectrum (SFS) calculated across the specified callable site set.
+* **`${region}_${era}_${label}.pestPG`**: Windowed summary statistics generated by `thetaStat`, including pairwise nucleotide diversity ($\pi$), Watterson's $\theta$, and Tajima's $D$.
+* **`pi_summary_${region}_${label}.tsv`**: Summary table of mean nucleotide diversity ($\pi / \theta_P$) with 95% bootstrap confidence intervals across eras.
+* **`pi_historic_vs_modern_${region}_${label}.png`**: Comparison plot of historic vs. modern nucleotide diversity per region and site set.
 
 #### 6. `fst/`
-$F_{ST}$ metrics between historical and modern populations derived from LD-pruned neutral loci.
-* **`${region}_hist_vs_mod.global_fst.txt`**: Global unweighted and weighted $F_{ST}$ values, in that order.
-* **`${region}_fst_manhattan.png`**: Manhattan plot displaying genome-wide $F_{ST}$ sliding window calculations across chromosomes.
-* **`sfs_summary_neutral_snps.png`**: site frequency spectrum (SFS) plot of historical vs. modern allele frequencies. Useful for identifying bioinformatic problems (paralogs can appear as an excess of alleles at 50% frequency; jagged SFS are also suspect). Also useful for identifying a loss of low-frequency alleles through time, which can indicate a bottleneck.
+$F_{ST}$ and 2D SFS metrics between historical and modern populations derived from all callable loci (`all_callable`) and putatively neutral callable loci (`callable_neutral`), including monomorphic sites, indicated by `${label}`.
+* **`${region}_${label}_hist_vs_mod.global_fst.txt`**: Global unweighted and weighted $F_{ST}$ values, in that order.
+* **`${region}_${label}_fst_manhattan.png`**: Manhattan plot displaying genome-wide $F_{ST}$ sliding window calculations across chromosomes.
+* **`sfs_summary_all_datasets.png`**: Site frequency spectrum (SFS) comparison plot of historical vs. modern allele frequencies across all regions and callable site subsets (`all_callable` and `callable_neutral`). Useful for identifying bioinformatic problems (paralogs can appear as an excess of alleles at 50% frequency; jagged SFS are also suspect) or a loss of low-frequency alleles through time indicative of a bottleneck.
 
+#### 7. `qc_bias/`
+Quality-control diagnostics comparing sequencing and mapping biases between historical and modern samples across called SNPs (`all_snps.pos`), generated by `EVALUATE_QC_BIAS`.
+* **`qc_bias_summary.tsv`**: Summary table of mean reference allele balance (`Ref / (Ref + Alt)`), and percentage of loci with significant strand bias ($p < 0.05$) per region and era.
+* **`qc_bias_plots.png`**: Multi-panel diagnostic plot comparing reference bias density distributions and strand bias across populations and eras.
 ---
 
 ### `large_data/` Directory (Untracked / Ignored by Git)
@@ -227,7 +257,7 @@ Contains heavy intermediate data, binary index files, and site set libraries (ex
 Base genomic coordinate indices, region mappings, and processed site set libraries.
 * **`all_sites.pos`** (`.bin`, `.idx`, `.regions`): Reference BED genomic targets (all 1-based genomic positions extracted directly from the input BED file prior to sequence read coverage or quality filtering) generated by `INDEX_BED_SITES`.
 * **`${params.species}.sites.txt`** (`.bin`, `.idx`, `.regions`, `.chrs`): Polymorphic site indices, region mappings, and chromosome lists output by `ANGSD_EXTRACT_SITES`. Not filtered by minind or maxdepth.
-* **`all_callable.pos`**: QC-filtered shared callable sites (the intersected subset of reference BED positions passing `minind_frac` and `maxdepth_mult` thresholds across every region-era subset) extracted by `PREPARE_SITE_SETS`. Includes monomorphic sites.
+* **`all_callable.pos`** (`.bin`, `.idx`): QC-filtered shared callable sites (the intersected subset of reference BED positions passing `minind_frac` and `maxdepth_mult` thresholds across every region-era subset) extracted and indexed by `PREPARE_SITE_SETS`. Includes monomorphic sites.
 * **`all_snps.pos`**: Full set of polymorphic SNPs passing quality and $p$-value filters.
 * **`selected_loci.pos`**: Position coordinates of candidate loci identified under selection by ACER.
 * **`callable_neutral.pos`** (`.bin`, `.idx`): All callable positions minus candidate selected loci.
@@ -250,10 +280,10 @@ Population sample allele frequency distributions used for downstream site freque
 
 #### 5. `large_data/thetas/`
 Per-site binary likelihoods for nucleotide diversity estimates.
-* **`${region}_${era}.thetas.gz`** (`.idx`): Binary per-site theta likelihood output generated by `realSFS saf2theta`. The positions are those in `all_callable.pos`.
+* **`${region}_${era}_${label}.thetas.gz`** (`.idx`): Binary per-site theta likelihood output generated by `realSFS saf2theta`. The positions correspond to `all_callable.pos` and `callable_neutral.pos` (indicated by `${label}`).
 
 #### 6. `large_data/fst/`
 Binary $F_{ST}$ indices, 2D-SFS matrices, and sliding window tables.
-* **`${region}_hist_vs_mod.fst.gz`** (`.idx`): Binary per-site $F_{ST}$ index files generated by `realSFS fst index`. The positions are those in `snps_pruned_neutral.pos`.
-* **`${region}_hist_vs_mod.2dsfs`**: 2D Site Frequency Spectrum matrix estimated between historical and modern populations. The positions are those in `snps_pruned_neutral.pos`.
-* **`${region}_windowed_fst.txt`**: Genome-wide sliding window $F_{ST}$ table output by `realSFS fst stats2`. The positions are those in `snps_pruned_neutral.pos`.
+* **`${region}_${label}_hist_vs_mod.fst.gz`** (`.idx`): Binary per-site $F_{ST}$ index files generated by `realSFS fst index`. The positions correspond to `all_callable.pos` and `callable_neutral.pos` (indicated by `${label}`).
+* **`${region}_${label}_hist_vs_mod.2dsfs`**: 2D Site Frequency Spectrum matrix estimated between historical and modern populations. The positions correspond to `all_callable.pos` and `callable_neutral.pos` (indicated by `${label}`).
+* **`${region}_${label}_windowed_fst.txt`**: Genome-wide sliding window $F_{ST}$ table output by `realSFS fst stats2`. The positions correspond to `all_callable.pos` and `callable_neutral.pos` (indicated by `${label}`).

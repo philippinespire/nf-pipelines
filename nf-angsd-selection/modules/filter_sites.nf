@@ -20,6 +20,7 @@ process PREPARE_SITE_SETS {
     path "site_counts.tsv"              , emit: summary
 
     // Pre-bundled 3-element tuples [pos, bin, idx] for realSFS
+    tuple path("all_callable.pos"), path("all_callable.pos.bin"), path("all_callable.pos.idx"), emit: all_callable_bundle
     tuple path("callable_neutral.pos"), path("callable_neutral.pos.bin"), path("callable_neutral.pos.idx"), emit: callable_neutral_bundle
     tuple path("all_snps.pos"), path("all_snps.pos.bin"), path("all_snps.pos.idx"), emit: all_snps_bundle
     tuple path("snps_pruned.pos"), path("snps_pruned.pos.bin"), path("snps_pruned.pos.idx"), emit: snps_pruned_bundle
@@ -63,6 +64,7 @@ process PREPARE_SITE_SETS {
     fi
 
     # Index position lists for realSFS site filtering
+    angsd sites index all_callable.pos
     angsd sites index callable_neutral.pos
     angsd sites index snps_pruned_neutral.pos
     angsd sites index all_snps.pos
