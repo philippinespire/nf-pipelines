@@ -15,7 +15,7 @@ The pipeline performs:
 * Custom duplicate removal, GATK Indel Realignment, depth statistics calculation, and optional FastQC, AMBER alignment evaluation, and mapDamage base quality rescaling.
 * Generation of quality control plots and statistics (see Output below).
 
-The pipeline is configured to run on Old Dominion University's WAHAB cluster using Nextflow DSL2 and Slurm/Conda execution profiles.
+The pipeline is configured to run on Old Dominion University's WAHAB cluster using Nextflow DSL2 version 26.10.0 and Slurm/Conda execution profiles.
 
 ---
 

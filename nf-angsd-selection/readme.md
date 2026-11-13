@@ -1,7 +1,7 @@
 ## Overview of nf-angsd-selection
 This is in beta testing. It runs fine, though it may have undiscovered bugs!
 
-This pipeline runs (optional) chi-squared selection scans from data across two time-points, does (optional) ld-pruning, calculates diversity estimates within the ANGSD framework on all putatively neutral sites (including monomorphic sites), and then makes PCA and admixture plots and calculates Fst with ANGSD on putatively neutral ld-pruned sites. It only considers sites that meet minimum individual and maximum depth limits in each of the population-eras (set as a fraction and a multiplier, respectively, of the full number of individuals and the total average depth across all individuals).
+This pipeline is for genotyping and basic pop gen analyses from temporal genomic lcWGS data. It calls probabilistic genotypes with ANGSD (excluding transitions), runs (optional) chi-squared selection scans from data across two time-points, does (optional) ld-pruning, calculates diversity estimates within the ANGSD framework on all putatively neutral sites (including monomorphic sites), and then makes PCA and admixture plots and calculates Fst with ANGSD on putatively neutral ld-pruned sites. It only considers sites that meet minimum individual and maximum depth limits in each of the population-eras (set as a fraction and a multiplier, respectively, of the full number of individuals and the total average depth across all individuals).
 
 It is written in Nextflow DSL2 and designed to be run on Old Dominion WAHAB cluster (use `-profile wahab`). The pipeline starts from BAM files, such as those output by nf-trim-generode. It was developed from nf-angsd-diversity by Malin Pinsky (August 2026) with plenty of help from Gemini.
 
@@ -145,7 +145,7 @@ Then start the nextflow pipeline as follows (while in tmux):
 # Load the nextflow module (version 23)
 module load container_env nextflow/23.10.1
 
-# Activate bash
+# Activate bash and your conda environment
 bash
 
 # Start the run
