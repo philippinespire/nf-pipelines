@@ -1,7 +1,16 @@
 ## Overview of nf-angsd-selection
 This is in beta testing. It runs fine, though it may have undiscovered bugs!
 
-This pipeline is for genotyping and basic pop gen analyses from temporal genomic lcWGS data. It calls probabilistic genotypes with ANGSD (excluding transitions), runs (optional) chi-squared selection scans from data across two time-points, does (optional) ld-pruning, calculates diversity estimates within the ANGSD framework on both all callable sites (`all_callable`) and putatively neutral callable sites (`callable_neutral`, including monomorphic sites), and makes PCA and admixture plots on putatively neutral ld-pruned SNPs (`snps_pruned_neutral`). It only considers sites that meet minimum individual and maximum depth limits in each of the population-eras (set as a fraction and a multiplier, respectively, of the full number of individuals and the total average depth across all individuals). 
+This pipeline is for genotyping and basic pop gen analyses from temporal genomic lcWGS data at two time points. 
+
+The pipeline
+* calls probabilistic genotypes with ANGSD (excluding transitions)
+* only considers sites that meet minimum individual and maximum depth limits in each of the population-eras (set as a fraction and a multiplier, respectively, of the full number of individuals and the total average depth across all individuals)
+* runs (optional) chi-squared (and cmh if >1 region) selection scans from data across two time-points
+* does (optional) ld-pruning
+* calculates diversity estimates within the ANGSD framework on both all callable sites (`all_callable`) and putatively neutral callable sites (`callable_neutral`, including monomorphic sites), using any chi-sq or cmh < fdr-cutoff as evidence of selection 
+* makes PCA and admixture plots on putatively neutral ld-pruned SNPs (`snps_pruned_neutral`)
+* calculates FST and plots a sliding window FST and SFS curves for all callable sites (`all_callable`) and putatively neutral callable sites (`callable_neutral`).
 
 It is written in Nextflow DSL2 and designed to be run on Old Dominion WAHAB cluster (use `-profile wahab`). The pipeline starts from BAM files, such as those output by nf-trim-generode. It was developed from nf-angsd-diversity by Malin Pinsky (August 2026) with plenty of help from Gemini.
 
@@ -42,9 +51,10 @@ The samplesheet is a comma-separated file (csv) and consists of the following co
 | TzoCMal003 | /path/to/bam/TzoCMal003.merged.realn.bam          | TzoCMal | modern | Malampaya |
 
 Important:
-* `pop`: not used.
-* `era` takes one of two arguments: modern or historic
-* `region` is used to define which historic and modern sites should be directly compared. Use the same value here if you want to directly compare sites across eras. Diversity is calculated for each region-era combination.
+* `pop`: currently unused by the workflow (retained for metadata compatibility).
+* `era`: case-insensitive label indicating timepoint. Accepted values are `historic` (aliases: `historical`, `hist`, `era1`) and `modern` (aliases: `mod`, `era2`). Do not mix different aliases within the same `region` (e.g., use `historic` consistently rather than mixing `historic` and `historical`), and do not use arbitrary labels or sampling years—unrecognized labels are silently excluded from diversity comparisons, $F_{ST}$, and ACER.
+* `region`: pairs historical and modern samples for direct temporal comparison. **Every `region` must contain samples from both eras**; regions with only one era are dropped from $F_{ST}$, diversity plots, and ACER selection scans.
+* **Global site intersection:** Callable sites (`all_callable.pos`) are intersected across **all** `region` × `era` combinations in the samplesheet. Including a single low-coverage population/era will reduce the number of callable sites retained across the entire dataset.
 
 If you want to use mapdamage-rescaled BAM files for historical samples (eg, from Generode or nf-trim-generode), point to those files in this input file.
 
@@ -68,7 +78,7 @@ Think carefully about which contigs to use. It may be useful to remove very low-
 
 
 ### Contig file
-Specify the contigs/regions for which to run the pipeline. One contig/region per line. This corresponds to the `-r` flag in [ANGSD](https://www.popgen.dk/angsd/index.php/Input). The pipeline will submit a job per contig/region.
+Specify the contigs/scaffolds to include in the analysis, one per line (passed via `-r` to ANGSD in `QC_POP_SITES_CONTIG` and `ANGSD_GL_ALL`, and parallelized per contig in `LD_PRUNE_CONTIG`). Note that `ANGSD_GL_POP`, `ANGSD_DIVERSITY`, and `ANGSD_FST` run across all intersected sites jointly rather than submitting separate jobs per contig.
 
 This code will pull a contig list out of the reference genome:
 ```
@@ -82,10 +92,10 @@ In the `main.nf` file, adjust the file paths for your project's reference and be
 In addition, the following parameters should be defined:
 * `min_ind_frac`: The fraction of individuals that have to be represented at a locus/site to use it. This is applied per region-era and the intersection of the passing loci in each region-era is used (default 0.7)
 * `max_depth_mult`: The multiple of the average depth to use as a ceiling in order to include a locus/site. This filter is applied per region-era and the intersection of the passing loci in each region-era is used (default 10)
-* `ld_prune`: Whether to prune out loci in linkage disequilibrium (often a good idea). The PCA and admixture calculations will then use the LD-pruned neutral SNP set (default true).
+* `ld_prune`: Whether to prune out SNPs in linkage disequilibrium within each contig (`ngsLD` + `prune_graph`, default `true`). Doing this is generally a good idea. When `false`, `snps_pruned.pos` defaults to `all_snps.pos` and PCA/Admixture run on unpruned neutral SNPs.
 * `max_kb_dist`: LD pruning uses a sliding window to test for disequilibrium. This sets the window width. Narrower will run faster, wider will run more slowly (default 50)
 * `min_weight`: Loci that are correlated (r2) more than this threshold will be trimmed out (default 0.2)
-* `run_selection`: Whether to run chi-squared selection scan (default true)
+* `run_selection`: Whether to run the iterative ACER selection scan (default `true`). When `false`, `selected_loci.pos` is empty and `callable_neutral` / `snps_pruned_neutral` are identical to `all_callable` / `snps_pruned`.
 * `generations`: Number of generations to use for Ne calculations (default 114 for Albatross to contemporary populations with a 1 year generation time)
 * `fdr_cutoff`: False detection rate (FDR) cutoff for iterative selection scan (default 0.05)
 * `max_rounds`: Maximum number of rounds to run for iterative selection scan (default 20)
@@ -117,6 +127,17 @@ params.min_ind     = 4      // Minimum number of individuals to include in Ne ca
 params.fst_window = 50000  // Window size in bp for sliding window FST calculations (default 50000)
 params.fst_step   = 10000  // Step size in bp for sliding window FST calculations (default 10000)
 ```
+
+## Methodological & Filtering Assumptions
+
+* **BAM indexing & depth threshold estimation:** All input BAMs must have `.bai`/`.csi` index files (`samtools idxstats` is used to count mapped reads). Expected mean depth is estimated from mapped read counts multiplied by the mean read length of the **first 1,000 reads** in each BAM, divided by total target bases in `bed_file` (`sum(end - start + 1)`, assuming non-overlapping 1-based inclusive intervals). `minInd` and `setMaxDepth` are rounded up to the nearest integer.
+* **Hardcoded ANGSD & statistical filters:**
+  * Base and mapping quality: `-minMapQ 25 -minQ 30 -uniqueOnly 1 -remove_bads 1`
+  * Transitions excluded during genotype likelihood/frequency estimation (`-rmTrans 1` in `ANGSD_GL_ALL`; `-noTrans 1` in `ANGSD_GL_POP`).
+  * Global SNP calling (`ANGSD_GL_ALL`): `-SNP_pval 1e-6 -skipTriallelic 0`, also subject to global `min_ind_frac` and `max_depth_mult` across the combined dataset.
+  * Ancestral state & SFS folding: `ANGSD_GL_POP` supplies `-anc <reference.fasta>`, polarizing alleles against the reference assembly. `ANGSD_DIVERSITY` computes a **folded** 1D SFS (`-fold 1`) and summarizes $\pi$ (`tP / nSites`) across contigs/scaffolds with 10,000 bootstrap replicates (`PLOT_PI_DIVERSITY`). `ANGSD_FST` computes an **unfolded** 2D SFS (`realSFS` without `-fold 1`).
+* **Neutral site masking (`selected_loci.pos`):** In `PREPARE_SITE_SETS`, a SNP is flagged as under selection if **either** the multi-region `cmh_fdr < fdr_cutoff` **or** any individual region's `<region>_chisq_fdr < fdr_cutoff`. Any locus flagged in at least one region is excluded from `callable_neutral` and `snps_pruned_neutral` across all regions.
+* **PCAngsd $K$ selection:** `pcangsd --admix` automatically infers the number of ancestral populations ($K$) from the significant eigenvalues of the covariance matrix; $K$ is not manually fixed.
 
 ## To Run
 
@@ -152,15 +173,15 @@ bash
 nextflow run main.nf -profile wahab -resume
 ```
 
-The `nextflow.config` file holds the profiles you can choose, so that you can use different profiles to match different compute environments. At the moment, it only has profiles for `wahab` and a low-resource one called `testwahab`.
+The `nextflow.config` file holds the profiles you can choose, so that you can use different profiles to match different compute environments. At the moment, it only has a profile for `wahab`.
 
 If everything went well, the pipeline will run and submit jobs to the queue. 
 On the first run, a new conda environment will be created. This can take some time.
 
 ### Test dataset
-A script to create a test dataset is included. It needs samtools available, so to run it on an interactive node on Wahab:
+A script to create a test dataset is included. It needs `samtools` available, so to run it on an interactive node on Wahab:
 ```
-salloc
+salloc # start the interactive node
 bash
 module load container_env samtools
 mkdir -p /tmp/$USER/bin
@@ -170,16 +191,51 @@ export PATH="/tmp/$USER/bin:$PATH"
 python3 test_data/make_test_dataset.py
 exit # to leave the salloc
 ```
-This will create test data files in `test_data/`
+This will create test data files in `test_data/`. The reference genome is 240,000 bp and has a 10,000 bp repeatitive region (chr1:100001–110000)plus a paralog on chr2. There are 191 SNPs, including 181 transversions (160 neutral + 6 sweeps + 10 in an LD-block + 5 in the repititive region)  and 10 transitions. Simulated Ne is 150. There is a 60% reference-allele bias planted in historic heterozygotes. Region A has higher ALT alleles frequencies and diversity than Region B. Both regions experience drift and lose some diversity.
 
-Then run it in a tmux shell, eg:
+To analyze the test dataset in a tmux shell:
 ```
-tmux a -t nextflow
+tmux new -t nextflow
 bash
 module load container_env nextflow/23.10.1
 nextflow run main.nf -profile wahab -c test_data/test.config -resume
 ```
 
+Then verify the results:
+
+1. Check site counts across all 7 libraries. It might not detect all six selected loci:
+```
+#    all_callable ~ 227,500 | all_snps == 176 | selected_loci == 6 | snps_pruned ~ 167
+cat test_data/results/sites/site_counts.tsv
+```
+
+2. Verify only the 6 planted sweep SNPs (chr1/chr2: 15500, 45500, 75500) were detected. It might not detect all six:
+```
+cat test_data/results/large_data/sites/selected_loci.pos
+```
+
+3. Removing the 4 selected outliers after Round 1 should increase estimated $N_e$ and get closer to the simulated $N_e = 150$:
+```
+cat test_data/results/selection/iteration_summary.tsv
+```
+
+4. Compare global FST (all_callable > callable_neutral due to the 6 sweep SNPs):
+```
+head test_data/results/fst/*global_fst.txt
+```
+
+5. Verify historical reference bias is higher than modern by a few percentage points. We don't expect any strand bias (< 5%)
+```
+cat test_data/results/qc_bias/qc_bias_summary.tsv
+```
+
+6. Check that the [PCA](test_data/results/PCAngsd/Tst.pcangsd.plot.png) separates the regions along PC1 and the time points along PC2.
+
+7. Check that $\pi$ is about 0.0003, which includes monomorphic sites, is higher in Region A than B, and is higher in historical than modern (by a little):
+```
+cat test_data/results/diversity/pi_summary_*.tsv
+```
+The callable neutral plots for [Region A](test_data/results/diversity/pi_historic_vs_modern_RegionA_callable_neutral.png) and [Region B](test_data/results/diversity/pi_historic_vs_modern_RegionB_callable_neutral.png) show this as well.
 
 ## Output
 ## Pipeline Output Directory Structure
@@ -188,21 +244,22 @@ All pipeline outputs are written to the directory specified by `--outdir` (defau
 
 ```
 results/
-├── inputfiles/                # Input BAM file lists
-├── sites/                     # Summary metrics across generated site set libraries
-├── selection/                 # ACER iterative selection scan outputs
-├── PCAngsd/                   # Population structure (PCA & Admixture)
 ├── diversity/                 # Summary nucleotide diversity statistics and comparison plots
 ├── fst/                       # Global FST values, SFS plot, and Manhattan plots
+├── inputfiles/                # Input BAM file lists
+├── PCAngsd/                   # Population structure (PCA & Admixture)
 ├── qc_bias/                   # Sequencing bias diagnostics (reference bias, strand bias)
+├── selection/                 # ACER iterative selection scan outputs
+├── sites/                     # Summary metrics across generated site set libraries
 └── large_data/                # Large binary, intermediate, and site library files (Ignored by git)
-    ├── sites/                 # Base coordinate indices, region mappings, and processed site libraries
     ├── beagle/                # Individual genotype likelihood matrices
+    ├── counts/                # Per-site, per-individual allele count matrices
+    ├── fst/                   # Binary FST indices, 2D SFS matrices, and windowed FST tables
     ├── mafs/                  # Point allele frequency tables
-    ├── counts/                # Per-site allele count matrices
     ├── saf/                   # Population sample allele frequency distributions
-    ├── thetas/                # Per-site nucleotide diversity estimates
-    └── fst/                   # Binary FST indices, 2D SFS matrices, and windowed FST tables
+    ├── sites/                 # Base coordinate indices, region mappings, and processed site libraries
+    ├── snpstat/               # Per-site SNP and strand-bias test statistics
+    └── thetas/                # Per-site nucleotide diversity estimates
 ```
 
 ### Output Directories Tracked by Git
@@ -227,8 +284,8 @@ Contains output tables and plots from the ACER iterative selection scan.
 Contains population structure and individual admixture results derived from LD-pruned neutral loci.
 * **`${params.species}.cov`**: Estimated individual covariance matrix for PCA calculation.
 * **`${params.species}.*.Q`**: Individual ancestry proportion matrix (Q-matrix) generated by PCAngsd admixture analysis.
-* **`${params.species}.pcangsd.plot.pdf`**: Publication-ready PCA scatter plot colored by population and era.
-* **`${params.species}.admixture.pdf`**: Stacked bar plot displaying individual admixture proportions.
+* **`${params.species}.pcangsd.plot.png`**: Publication-ready PCA scatter plot colored by population and era.
+* **`${params.species}.admixture.png`**: Stacked bar plot displaying individual admixture proportions.
 
 #### 5. `diversity/`
 Summary nucleotide diversity files calculated across all callable loci (`all_callable`) and putatively neutral callable loci (`callable_neutral`), including both monomorphic and polymorphic sites, indicated by `${label}`.
@@ -274,15 +331,21 @@ Point allele frequency tables across populations and subsets.
 * **`${params.species}.mafs.gz`**: Combined SNPS frequency table across all individuals. The positions are those in `all_snps.pos`.
 * **`${region}_${era}.mafs.gz`**: Major/minor allele frequency outputs per population/era subset, including monomorphic. The positions are those in `all_callable.pos`.
 
-#### 4. `large_data/saf/`
+#### 4. `large_data/counts/`
+* **`${region}_${era}.counts.gz`**: Per-individual A, C, G, T base counts across `all_callable.pos` (`-dumpCounts 4`), used by `EVALUATE_QC_BIAS` to compute reference allele balance.
+
+#### 5. `large_data/snpstat/`
+* **`${region}_${era}.snpStat.gz`**: ANGSD per-site quality and strand-bias test statistics (`-dosnpstat 1`) across `all_callable.pos`, used by `EVALUATE_QC_BIAS`.
+
+#### 6. `large_data/saf/`
 Population sample allele frequency distributions used for downstream site frequency spectra.
 * **`${region}_${era}.saf.gz`** (`.idx`, `.pos.gz`): Binary Sample Allele Frequency distributions generated by `ANGSD_GL_POP`. The positions are those in `all_callable.pos`.
 
-#### 5. `large_data/thetas/`
+#### 7. `large_data/thetas/`
 Per-site binary likelihoods for nucleotide diversity estimates.
 * **`${region}_${era}_${label}.thetas.gz`** (`.idx`): Binary per-site theta likelihood output generated by `realSFS saf2theta`. The positions correspond to `all_callable.pos` and `callable_neutral.pos` (indicated by `${label}`).
 
-#### 6. `large_data/fst/`
+#### 8. `large_data/fst/`
 Binary $F_{ST}$ indices, 2D-SFS matrices, and sliding window tables.
 * **`${region}_${label}_hist_vs_mod.fst.gz`** (`.idx`): Binary per-site $F_{ST}$ index files generated by `realSFS fst index`. The positions correspond to `all_callable.pos` and `callable_neutral.pos` (indicated by `${label}`).
 * **`${region}_${label}_hist_vs_mod.2dsfs`**: 2D Site Frequency Spectrum matrix estimated between historical and modern populations. The positions correspond to `all_callable.pos` and `callable_neutral.pos` (indicated by `${label}`).

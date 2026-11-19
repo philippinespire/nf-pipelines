@@ -57,6 +57,8 @@ def add_site(ctg, pos0, alt_base, freqs, tag):
     }
 
 # A) 160 Neutral transversion SNPs (80 per contig, outside masked/QC-fail windows)
+import math
+DRIFT_SD_SCALE = math.sqrt(1.0 - math.exp(-50.0 / (2.0 * 150.0)))  # Ne = 150, t = 50 gen
 neutral_positions = {
     "chr1": [p for p in range(1_000, 99_000, 1_100) if not (15_000 <= p <= 16_000 or 20_000 <= p <= 21_500 or 30_000 <= p <= 31_500 or 45_000 <= p <= 46_000 or 75_000 <= p <= 76_000)][:80],
     "chr2": [p for p in range(1_000, 79_000, 900) if not (15_000 <= p <= 16_000 or 45_000 <= p <= 46_000 or 75_000 <= p <= 76_000)][:80],
@@ -67,11 +69,13 @@ for ctg, positions in neutral_positions.items():
         # Regional divergence + small temporal drift
         p_regA = min(0.85, max(0.05, p_anc + random.gauss(0.10, 0.04)))
         p_regB = min(0.85, max(0.05, p_anc - random.gauss(0.10, 0.04)))
+        sd_A = math.sqrt(p_regA * (1.0 - p_regA)) * DRIFT_SD_SCALE
+        sd_B = math.sqrt(p_regB * (1.0 - p_regB)) * DRIFT_SD_SCALE
         freqs = {
             ("RegionA", "historic"): p_regA,
-            ("RegionA", "modern"): min(0.90, max(0.05, p_regA + random.gauss(0, 0.03))),
+            ("RegionA", "modern"): min(0.95, max(0.05, p_regA + random.gauss(0, sd_A))),
             ("RegionB", "historic"): p_regB,
-            ("RegionB", "modern"): min(0.90, max(0.05, p_regB + random.gauss(0, 0.03))),
+            ("RegionB", "modern"): min(0.95, max(0.05, p_regB + random.gauss(0, sd_B))),
         }
         add_site(ctg, pos0, TRANSVERSIONS[ref_seqs[ctg][pos0]], freqs, "neutral")
 
@@ -165,7 +169,7 @@ for region in REGIONS:
                                 seq[offset] = variants[(ctg, pos0)]["alt"]
                     flag = 0 if random.random() < 0.5 else 16
                     sort_proc.stdin.write(
-                        f"{sample_id}_{read_num}\t{flag}\t{ctg}\t{start0 + 1}\t60\t{READ_LEN}M\t*\t0\t0\t{''.join(seq)}\t{qual_str}\n"
+                        f"{sample_id}_{read_num}\t{flag}\t{ctg}\t{start0 + 1}\t60\t{READ_LEN}M\t*\t0\t0\t{''.join(seq)}\t{qual_str}\tXO:i:1\tX0:i:1\tNM:i:0\n"
                     )
 
                 # Plant high-depth paralog spike at chr2:90001-90500 (~100x extra depth)
@@ -175,7 +179,7 @@ for region in REGIONS:
                         read_num += 1
                         seq = "".join(ref_seqs[ctg][start0 : start0 + READ_LEN])
                         sort_proc.stdin.write(
-                            f"{sample_id}_spike_{read_num}\t0\t{ctg}\t{start0 + 1}\t60\t{READ_LEN}M\t*\t0\t0\t{seq}\t{qual_str}\n"
+                            f"{sample_id}_spike_{read_num}\t0\t{ctg}\t{start0 + 1}\t60\t{READ_LEN}M\t*\t0\t0\t{seq}\t{qual_str}\tXO:i:1\tX0:i:1\tNM:i:0\n"
                         )
 
             sort_proc.stdin.close()
@@ -199,12 +203,6 @@ params {{
     species       = "Tst"
     generations   = 50
     n_boot        = 100
-}}
-
-process {{
-    executor = 'local'
-    cpus     = 2
-    memory   = '4 GB'
 }}
 """)
 

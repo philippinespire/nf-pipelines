@@ -11,7 +11,14 @@ process PCANGSD {
 
     script:
     """
-    pcangsd -b ${all_beagle} --admix -t ${task.cpus ?: 8} -o ${params.species}
+    # if <100 sites, run admixture in one batch to avoid errors (5 or 10 is default to speed up computation)
+    n_sites=\$(( \$(gzip -dc ${all_beagle} | wc -l) - 1 ))
+    admix_batch_opt=""
+    if [ "\${n_sites}" -lt 100 ]; then
+        admix_batch_opt="--admix-batch 1"
+    fi
+
+    pcangsd -b ${all_beagle} --admix \${admix_batch_opt} -t ${task.cpus ?: 8} -o ${params.species}
     """
 }
 

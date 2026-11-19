@@ -48,6 +48,7 @@ process QC_POP_SITES_CONTIG {
         -r "$contig" \
         -GL 1 -doMajorMinor 4 -doMaf 1 \
         -doCounts 1 \
+        -uniqueOnly 1 -remove_bads 1 \
         -minMapQ 25 -minQ 30 \
         -minInd ${min_ind} \
         -setMaxDepth ${max_depth} \

@@ -50,8 +50,8 @@ process ANGSD_GL_ALL {
         -doMaf 1 \
         -minMapQ 25 -minQ 30 \
         -SNP_pval 1e-6 \
-        -minInd \$min_ind \
-        -setMaxDepth \$max_depth \
+        -minInd $min_ind \
+        -setMaxDepth $max_depth \
         -uniqueOnly 1 -remove_bads 1 \
         -skipTriallelic 0 \
         -doCounts 1 -doDepth 1 -dumpCounts 1 \

@@ -37,16 +37,22 @@ process PREPARE_SITE_SETS {
         cp all_snps.pos snps_pruned.pos
     fi
 
+    # Identify selected loci using FDR-corrected chi-squared (in any population) and CMH tests
     if [ -f "${chisq_results}" ] && [ -s "${chisq_results}" ]; then
         awk -v fdr="${params.fdr_cutoff}" '
             NR==1 {
                 for (i=1; i<=NF; i++) {
-                    if (\$i ~ /chisq_fdr\$/) fdr_col=i
+                    if (\$i ~ /(_chisq_fdr|^cmh_fdr)\$/) fdr_cols[i]=1
                 }
                 next
             }
-            fdr_col && \$fdr_col != "NA" && (\$fdr_col+0) <= fdr {
-                print \$1"\t"\$2
+            {
+                for (i in fdr_cols) {
+                    if (\$i != "NA" && (\$i+0) < fdr) {
+                        print \$1"\t"\$2
+                        next
+                    }
+                }
             }
         ' ${chisq_results} > selected_loci.pos
     else
