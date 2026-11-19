@@ -80,7 +80,7 @@ if (length(amber_files) > 0) {
     # Extract sample name directly from standardized Nextflow filename (<sample_name>.amber_MQ25.txt)
     sample_id <- sub("\\.amber_MQ[0-9]+\\.txt$", "", basename(filepath))
     
-
+    
     get_block <- function(header_pattern) {
       h_idx <- grep(header_pattern, lines)
       if (length(h_idx) == 0) return(NULL)
@@ -180,7 +180,7 @@ if (length(mapd_files) > 0) {
     
     # Identify substitution columns (e.g., C>T, G>A)
     sub_cols <- intersect(c("C>T", "G>A", "C_T", "G_A", "C.T", "G.A", "S"), colnames(mapd_df))    
-    
+
     if (length(sub_cols) > 0) {
     mapd_long <- mapd_df %>%
         pivot_longer(cols = all_of(sub_cols), names_to = "mutation", values_to = "count") %>%
@@ -273,32 +273,22 @@ load_and_merge_bed <- function(bed_path) {
   
   if (nrow(df) == 0) return(NULL)
   
-  # Merge overlapping intervals per chromosome
-  df_merged <- df %>%
+  # Vectorized interval merge per chromosome (O(N log N))
+  df_sorted <- df %>%
+    arrange(chr, start, end) %>%
     group_by(chr) %>%
-    group_modify(~ {
-      if (nrow(.x) == 0) return(.x)
-      s_vec <- numeric()
-      e_vec <- numeric()
-      cur_s <- .x$start[1]
-      cur_e <- .x$end[1]
-      if (nrow(.x) > 1) {
-        for (i in 2:nrow(.x)) {
-          if (.x$start[i] <= cur_e) {
-            cur_e <- max(cur_e, .x$end[i])
-          } else {
-            s_vec <- c(s_vec, cur_s)
-            e_vec <- c(e_vec, cur_e)
-            cur_s <- .x$start[i]
-            cur_e <- .x$end[i]
-          }
-        }
-      }
-      s_vec <- c(s_vec, cur_s)
-      e_vec <- c(e_vec, cur_e)
-      tibble(start = s_vec, end = e_vec)
-    }) %>%
+    mutate(
+      cummax_end = cummax(end),
+      is_start   = start > lag(cummax_end, default = -Inf)
+    ) %>%
     ungroup()
+
+  is_end <- c(df_sorted$is_start[-1], TRUE)
+  df_merged <- tibble(
+    chr   = df_sorted$chr[df_sorted$is_start],
+    start = df_sorted$start[df_sorted$is_start],
+    end   = df_sorted$cummax_end[is_end]
+  )
   
   return(df_merged)
 }
@@ -307,16 +297,42 @@ intersect_beds <- function(bed1, bed2) {
   if (is.null(bed1) || is.null(bed2) || nrow(bed1) == 0 || nrow(bed2) == 0) {
     return(NULL)
   }
-  
-  ov <- inner_join(bed1, bed2, by = "chr", relationship = "many-to-many") %>%
-    filter(start.x < end.y & start.y < end.x) %>%
-    mutate(
-      start = pmax(start.x, start.y),
-      end = pmin(end.x, end.y)
-    ) %>%
-    filter(end > start) %>%
-    select(chr, start, end)
-  
+
+  common_chrs <- intersect(unique(bed1$chr), unique(bed2$chr))
+  if (length(common_chrs) == 0) return(NULL)
+
+  ov_list <- lapply(common_chrs, function(c_name) {
+    b1 <- bed1[bed1$chr == c_name, ]
+    b2 <- bed2[bed2$chr == c_name, ]
+    n1 <- nrow(b1)
+    n2 <- nrow(b2)
+
+    s_out <- numeric(n1 + n2)
+    e_out <- numeric(n1 + n2)
+    i <- 1L
+    j <- 1L
+    k <- 0L
+
+    while (i <= n1 && j <= n2) {
+      s <- max(b1$start[i], b2$start[j])
+      e <- min(b1$end[i], b2$end[j])
+      if (s < e) {
+        k <- k + 1L
+        s_out[k] <- s
+        e_out[k] <- e
+      }
+      if (b1$end[i] < b2$end[j]) {
+        i <- i + 1L
+      } else {
+        j <- j + 1L
+      }
+    }
+
+    if (k == 0L) return(NULL)
+    tibble(chr = c_name, start = s_out[seq_len(k)], end = e_out[seq_len(k)])
+  })
+
+  ov <- bind_rows(ov_list)
   if (nrow(ov) == 0) return(NULL)
   return(ov)
 }
