@@ -32,7 +32,7 @@ include { LD_PRUNE_CONTIG; MERGE_PRUNED_SITES; SUBSET_BEAGLE                    
 include { PREPARE_SITE_SETS                                                         } from './modules/filter_sites.nf'
 include { RUN_ACER                                                                  } from './modules/acer.nf'
 include { ANGSD_FST; PLOT_SFS_SUMMARY                                               } from './modules/angsd_fst.nf'
-include { EVALUATE_QC_BIAS                                                          } from './modules/qc_bias.nf'
+include { CALC_IND_HET; EVALUATE_QC_BIAS                                             } from './modules/qc_bias.nf'
 
 // Workflow 
 workflow {
@@ -212,11 +212,19 @@ workflow {
     // Generate SFS comparison plot across all regions
     PLOT_SFS_SUMMARY(ANGSD_FST.out.sfs_2d.collect())
 
-    // Evaluate Ts/Tv, Reference Bias, and Strand Bias across Eras (restricted to called SNPs)
+    // Evaluate Reference Bias and Strand Bias across Eras (restricted to called SNPs)
+    ch_ind_bams = samples.map { sample, pop, era, region, bam -> tuple(sample, era, region, file(bam)) }
+    CALC_IND_HET(
+        ch_ind_bams,
+        ch_ref,
+        PREPARE_SITE_SETS.out.all_callable_bundle.first()
+    )
+
     EVALUATE_QC_BIAS(
         ANGSD_GL_POP.out.mafs.collect(),
         ANGSD_GL_POP.out.counts.collect(),
         ANGSD_GL_POP.out.snpstat.collect(),
+        CALC_IND_HET.out.sfs.collect(),
         PREPARE_SITE_SETS.out.all_snps,
         file(params.samplesheet)
     )

@@ -1,6 +1,7 @@
 #!/usr/bin/env Rscript
 
 # goal is to calculate Reference Bias (Ref / (Ref + Alt)), and Strand Bias (p < 0.05 fraction) across eras.
+# also plot individual heterozygosity (Ho) vs. mean depth across callable sites for each individual.
 
 suppressPackageStartupMessages({
   library(data.table)
@@ -37,6 +38,18 @@ if (is.null(alist$snpstat) || !nzchar(alist$snpstat)) {
 }
 snpstat_files <- unlist(strsplit(alist$snpstat, ","))
 
+ind_sfs_files <- unlist(strsplit(alist$ind_sfs, ","))
+meta <- fread(alist$samplesheet)
+meta[, `:=`(
+  sample = trimws(as.character(sample)),
+  region = trimws(as.character(region)),
+  era_norm = ifelse(
+    grepl("^(historic|historical|hist|era1)$", trimws(tolower(as.character(era)))),
+    "Historic", "Modern"
+  )
+)]
+ind_depth_list <- list()
+
 results_list <- list()
 maf_dt_list  <- list()
 
@@ -49,8 +62,8 @@ for (i in seq_along(maf_files)) {
   # Extract population and era from filename (e.g., Bali_historic.mafs.gz)
   base_name <- basename(m_file)
   pop_era   <- gsub("\\.mafs\\.gz$", "", base_name)
-  era       <- ifelse(grepl("_(historic|historical|hist|era1)$", pop_era, ignore.case = TRUE), "Historic", "Modern")
-  pop       <- sub("_(historic|historical|hist|era1|modern|mod|era2)$", "", pop_era, ignore.case = TRUE)
+  target_era       <- ifelse(grepl("_(historic|historical|hist|era1)$", pop_era, ignore.case = TRUE), "Historic", "Modern")
+  target_pop       <- sub("_(historic|historical|hist|era1|modern|mod|era2)$", "", pop_era, ignore.case = TRUE)
   
   # Match corresponding counts file by exact basename (Nextflow .collect() order is not guaranteed)
   c_match <- count_files[basename(count_files) == paste0(pop_era, ".counts.gz")]
@@ -58,6 +71,21 @@ for (i in seq_along(maf_files)) {
     stop(sprintf("Could not uniquely match counts file for %s", pop_era))
   }
   c_file <- c_match[1]
+
+  # Per-individual mean depth across all callable sites in <pop>_<era>.counts.gz
+  depth_cmd <- sprintf(
+    "zcat %s | awk 'NR>1 {n_sites++; for(j=1;j<=NF;j++) col[j]+=$j} END {n_ind=NF/4; for(k=0;k<n_ind;k++) {d=col[4*k+1]+col[4*k+2]+col[4*k+3]+col[4*k+4]; printf \"%%d\\t%%.6f\\n\", k, (n_sites>0 ? d/n_sites : 0)}}'",
+    shQuote(c_file)
+  )
+  cohort_depths <- fread(cmd = depth_cmd, col.names = c("ind_idx", "mean_depth"))
+  cohort_meta <- meta[tolower(region) == tolower(target_pop) & era_norm == target_era]
+
+  if (nrow(cohort_meta) != nrow(cohort_depths)) {
+  stop(sprintf("Sample count mismatch for %s_%s: samplesheet has %d, counts.gz has %d",
+              target_pop, target_era, nrow(cohort_meta), nrow(cohort_depths)))
+  }
+  cohort_depths[, `:=`(sample = cohort_meta$sample, pop = target_pop, era = target_era)]
+  ind_depth_list[[i]] <- cohort_depths[, .(sample, pop, era, mean_depth)]
 
   # Read MAF data
   maf <- fread(cmd = paste("zcat", shQuote(m_file)), select = c("chromo", "position", "major", "minor", "ref"))
@@ -77,7 +105,7 @@ for (i in seq_along(maf_files)) {
   
   # Restrict to called SNPs only
   dt <- dt[snps, on = .(chromo, position), nomatch = 0]
-  dt[, `:=`(pop = pop, era = era, pop_era = pop_era)]
+  dt[, `:=`(pop = target_pop, era = target_era, pop_era = pop_era)]
   
   # 3. Calculate Reference Bias (Ref Count / (Ref Count + Alt Count))
   # Identify the non-reference allele between major and minor
@@ -108,10 +136,10 @@ for (i in seq_along(maf_files)) {
   dt_sb[, sb_pval := suppressWarnings(as.numeric(sb3_raw))]
   dt_sb <- dt_sb[is.finite(sb_pval)]
   pct_sb_significant <- if (nrow(dt_sb) > 0) mean(dt_sb$sb_pval < 0.05) * 100 else 0
-  
+
   results_list[[i]] <- data.table(
-    pop = pop,
-    era = era,
+    pop = target_pop,
+    era = target_era,
     pop_era = pop_era,
     mean_ref_ratio = mean_ref_ratio,
     pct_strand_bias = pct_sb_significant
@@ -152,3 +180,32 @@ pushViewport(viewport(layout = grid.layout(2, 1)))
 print(p_ref, vp = viewport(layout.pos.row = 1, layout.pos.col = 1))
 print(p_sb,  vp = viewport(layout.pos.row = 2, layout.pos.col = 1))
 dev.off()
+
+
+# Individual QC: Mean Depth vs. Observed Heterozygosity (Ho)
+ind_depth_dt <- rbindlist(ind_depth_list)
+
+# Parse 1D SFS (<sample>.est.ml: [hom_anc, het, hom_der])
+sfs_dt <- rbindlist(lapply(ind_sfs_files, function(f) {
+  s_name <- sub("\\.est\\.ml$", "", basename(f))
+  vals <- scan(f, quiet = TRUE)
+  ho <- if (length(vals) >= 3 && sum(vals) > 0) vals[2] / sum(vals) else NA_real_
+  data.table(sample = s_name, Ho = ho)
+}))
+
+ind_qc_dt <- merge(ind_depth_dt, sfs_dt, by = "sample", all.x = TRUE)
+fwrite(ind_qc_dt, alist$out_ind_tsv, sep = "\t")
+
+p_het <- ggplot(ind_qc_dt, aes(x = mean_depth, y = Ho, color = pop)) +
+  geom_point(size = 3, alpha = 0.85) +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "gray30", linetype = "dashed", linewidth = 0.7) +
+  facet_wrap(~era, scales = "free_x") +
+  theme_minimal(base_size = 12) +
+  labs(
+    title = "Individual Observed Heterozygosity (Ho) vs. Mean Callable Depth",
+    x = "Mean Depth Across Callable Sites (X)",
+    y = "Observed Heterozygosity (Ho)",
+    color = "Region / Pop"
+  )
+
+ggsave(alist$out_ind_png, plot = p_het, width = 10, height = 5, dpi = 300)
