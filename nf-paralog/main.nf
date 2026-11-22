@@ -29,14 +29,26 @@ params.duphmm_min_len    = 1  // Minimum length (bp) threshold for retained regi
 params.mask_window   = 1000  // Distance (bp) to extend masking in both directions around identified paralogous regions/SNPs
 
 // --- Helper Functions ---
+// find fastq read pair files for a given sample ID, ensuring that both R1 and R2 exist and are unambiguous
 def resolve_reads(String sample_id) {
-    def r1 = file("${params.indir}/${sample_id}_R1.fastq.gz")
-    def r2 = file("${params.indir}/${sample_id}_R2.fastq.gz")
+    // Search for reads explicitly requiring the .fastq.gz or .fq.gz extension
+    def r1_match = file("${params.indir}/${sample_id}{_R1,_1}.{fastq.gz,fq.gz}")
+    def r2_match = file("${params.indir}/${sample_id}{_R2,_2}.{fastq.gz,fq.gz}")
 
-    if( !r1.exists() ) error "R1 file not found for ${sample_id}: ${r1}"
-    if( !r2.exists() ) error "R2 file not found for ${sample_id}: ${r2}"
+    // Force Nextflow to treat the result as a list (in case only 1 file matches and it returns a single Path object)
+    def r1_files = r1_match instanceof Path ? [r1_match] : r1_match
+    def r2_files = r2_match instanceof Path ? [r2_match] : r2_match
 
-    return [r1, r2]
+    // Check for missing files
+    if (!r1_files || r1_files.size() == 0) error "R1 file not found for ${sample_id} in ${params.indir}"
+    if (!r2_files || r2_files.size() == 0) error "R2 file not found for ${sample_id} in ${params.indir}"
+
+    // Check for duplicate/colliding files (e.g., both .fq.gz and .fastq.gz exist)
+    if (r1_files.size() > 1) error "Multiple R1 files found for ${sample_id}: ${r1_files.join(', ')}. Please resolve duplicates."
+    if (r2_files.size() > 1) error "Multiple R2 files found for ${sample_id}: ${r2_files.join(', ')}. Please resolve duplicates."
+
+    // Safely return the exact match
+    return [r1_files[0], r2_files[0]]
 }
 
 
