@@ -3,9 +3,9 @@
 # ==============================================================================
 # SCRIPT NAME:  plot_admixture.R
 # PURPOSE:      Visualizes PCAngsd Admixture proportions (K=3) into a high-quality 
-#               PDF barplot, sorted and grouped by historical vs. modern metadata.
+#               PNG barplot, sorted and grouped by historical vs. modern metadata.
 #
-# USAGE:        Rscript plot_admixture.R <input.Q> <metadata.csv> <output.pdf>
+# USAGE:        Rscript plot_admixture.R <input.Q> <metadata.csv> <output.png>
 #
 # INPUTS:       1. <input.Q>    - Space-separated PCAngsd admixture matrix.
 #               2. <metadata.csv> - CSV file containing sample metadata. Must 
@@ -37,6 +37,7 @@ if (!file.exists(meta_file)) stop(paste("Error: File not found -", meta_file))
 
 Q    <- read.table(q_file)
 meta <- read.csv(meta_file)
+meta$era <- trimws(as.character(meta$era)) # trim whitespace if it exists
 
 # Automatically infer K from the number of columns in the .Q file
 K <- ncol(Q)
@@ -58,7 +59,7 @@ sorted_data <- combined[order(combined$era), ]
 
 # Separate back out into the sorted Q matrix
 # Assumes Q columns are the last K columns of the sorted data frame
-Q_sorted <- sorted_data[, (ncol(sorted_data)-K+1):ncol(sorted_data)]
+Q_sorted <- sorted_data[, (ncol(sorted_data) - K + 1):ncol(sorted_data), drop = FALSE]
 
 # Choose sample labels for the x-axis; prefer common sample ID column names.
 sample_label_candidates <- c("sample", "sample_id", "sampleid", "individual", "ind", "id", "name")
@@ -77,8 +78,8 @@ sample_labels <- as.character(sorted_data[[sample_label_col]])
 group_counts <- table(sorted_data$era)
 
 # 4. Open PNG graphics device 
-png(file = output_png, width = 10, height = 6, units = "in", res = 300)
-	
+png(output_png, width = 10, height = 5, units = "in", res = 300, type = "cairo")
+
 # 5. Set margins (increase bottom margin for sample and era labels)
 par(mar = c(10, 4, 3, 1))
 
