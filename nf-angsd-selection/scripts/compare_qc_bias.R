@@ -196,16 +196,17 @@ sfs_dt <- rbindlist(lapply(ind_sfs_files, function(f) {
 ind_qc_dt <- merge(ind_depth_dt, sfs_dt, by = "sample", all.x = TRUE)
 fwrite(ind_qc_dt, alist$out_ind_tsv, sep = "\t")
 
-p_het <- ggplot(ind_qc_dt, aes(x = mean_depth, y = Ho, color = pop)) +
+p_het <- ggplot(ind_qc_dt, aes(x = mean_depth, y = Ho, color = era, shape = pop)) +
   geom_point(size = 3, alpha = 0.85) +
-  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "gray30", linetype = "dashed", linewidth = 0.7) +
-  facet_wrap(~era, scales = "free_x") +
+  geom_smooth(aes(group = era, fill = era), method = "lm", se = TRUE, linetype = "dashed", linewidth = 0.7, alpha = 0.15) +
   theme_minimal(base_size = 12) +
   labs(
     title = "Individual Observed Heterozygosity (Ho) vs. Mean Callable Depth",
     x = "Mean Depth Across Callable Sites (X)",
     y = "Observed Heterozygosity (Ho)",
-    color = "Region / Pop"
+    color = "Era",
+    fill = "Era",
+    shape = "Region/Population"
   )
 
-ggsave(alist$out_ind_png, plot = p_het, width = 10, height = 5, dpi = 300)
+ggsave(alist$out_ind_png, plot = p_het, width = 7.5, height = 5, dpi = 300)
