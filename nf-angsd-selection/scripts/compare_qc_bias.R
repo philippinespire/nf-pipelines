@@ -120,21 +120,82 @@ for (i in seq_along(maf_files)) {
   
   mean_ref_ratio <- mean(dt_valid$ref_ratio, na.rm = TRUE)
   
-  # 4. Calculate Strand Bias from snpStat file
+  # ---------------------------------------------------------------------------
+  # 4. Calculate Strand Bias from snpStat file (with Tarone's Criterion)
+  # ---------------------------------------------------------------------------
+  # ANGSD's snpStat.gz reports forward (+)/reverse (-) read counts for Major
+  # and Minor alleles alongside SB1:SB2:SB3, where SB3 is the two-sided
+  # Fisher's exact test p-value on the 2x2 strand-by-allele contingency table.
+  #
+  # Why we apply Tarone's criterion (Tarone 1990, Biometrics):
+  #   1. Discrete test power: Because read counts are integers, SNPs with low
+  #      minor-allele or single-strand coverage cannot reach p < 0.05 even under
+  #      100% strand asymmetry.
+  #   2. Monomorphic sites: ANGSD outputs SB3 = 1.000000 for global SNPs that
+  #      are monomorphic within a given cohort (+Minor + -Minor == 0).
+  #   Including these untestable/monomorphic sites in the denominator artificially
+  #   deflates the % significant strand-bias rate in lower-depth cohorts (e.g.,
+  #   historic samples). Conditioning on observed marginal totals to compute the
+  #   minimum achievable p-value (p_min) and keeping only loci with p_min < 0.05
+  #   removes both monomorphic and underpowered sites without biasing the test.
+  # ---------------------------------------------------------------------------
   s_match <- snpstat_files[basename(snpstat_files) == paste0(pop_era, ".snpStat.gz")]
   if (length(s_match) != 1 || !file.exists(s_match)) {
     stop(sprintf("Could not uniquely match snpStat file for %s", pop_era))
   }
   s_file <- s_match[1]
 
-  snpstat <- fread(cmd = paste("zcat", shQuote(s_file)), select = c("Chromo", "Position", "SB1:SB2:SB3"))
-  setnames(snpstat, c("Chromo", "Position", "SB1:SB2:SB3"), c("chromo", "position", "sb_info"))
+  # ANGSD -doSNPstat 1 separates "+Major +Minor -Major -Minor" and their four
+  # integer counts (e.g., "15 0 20 1") with spaces rather than tabs on every line,
+  # while separating all other fields with tabs. Rebuilding every record with
+  # OFS="\t" ({$1=$1}) converts all mixed space/tab delimiters into 11 uniform
+  # tab-delimited columns so fread() can select and validate columns by name.
+  snpstat_cmd <- sprintf("zcat %s | awk 'BEGIN{OFS=\"\\t\"} {$1=$1} 1'", shQuote(s_file))
+  snpstat <- fread(
+    cmd = snpstat_cmd,
+    select = c("Chromo", "Position", "+Major", "+Minor", "-Major", "-Minor", "SB1:SB2:SB3")
+  )
+  setnames(
+    snpstat,
+    c("Chromo", "Position", "+Major", "+Minor", "-Major", "-Minor", "SB1:SB2:SB3"),
+    c("chromo", "position", "plus_maj", "plus_min", "minus_maj", "minus_min", "sb_info")
+  )
 
-  # Subset to called SNPs before parsing SB1:SB2:SB3
+  # Subset to the global set of called SNPs before parsing SB1:SB2:SB3
   dt_sb <- snpstat[snps, on = .(chromo, position), nomatch = 0]
   sb3_raw <- tstrsplit(dt_sb$sb_info, ":", fixed = TRUE)[[3]]
   dt_sb[, sb_pval := suppressWarnings(as.numeric(sb3_raw))]
-  dt_sb <- dt_sb[is.finite(sb_pval)]
+
+  # Marginal totals of each site's 2x2 table:
+  #   R1 = total forward (+) reads, R2 = total reverse (-) reads, C2 = total minor reads
+  dt_sb[, `:=`(
+    R1 = plus_maj + plus_min,
+    R2 = minus_maj + minus_min,
+    C2 = plus_min + minus_min
+  )]
+
+  # Under fixed margins, forward minor reads follow Hypergeom(R1, R2, C2) on [b_min, b_max].
+  # Because the hypergeometric PMF is unimodal, the least probable table (and thus p_min)
+  # always lies at one of the two boundary counts b_min or b_max.
+  dt_sb[, `:=`(
+    b_min = pmax(0L, C2 - R2),
+    b_max = pmin(R1, C2)
+  )]
+  dt_sb[, `:=`(
+    p1 = dhyper(b_min, m = R1, n = R2, k = C2),
+    p2 = dhyper(b_max, m = R1, n = R2, k = C2)
+  )]
+
+  # Edge cases for p_min:
+  #   - b_min == b_max (monomorphic or single-strand sites): only 1 table exists -> p_min = 1.0
+  #   - p1 == p2 (symmetric margins): both tails contribute to two-sided p -> p_min = p1 + p2
+  dt_sb[, p_min := fifelse(
+    b_min == b_max, 1.0,
+    fifelse(abs(p1 - p2) <= 1e-12 * pmax(p1, p2), p1 + p2, pmin(p1, p2))
+  )]
+
+  # Retain only finite, Tarone-testable loci (p_min < 0.05) for the denominator
+  dt_sb <- dt_sb[is.finite(sb_pval) & is.finite(p_min) & p_min < 0.05]
   pct_sb_significant <- if (nrow(dt_sb) > 0) mean(dt_sb$sb_pval < 0.05) * 100 else 0
 
   results_list[[i]] <- data.table(
@@ -142,6 +203,7 @@ for (i in seq_along(maf_files)) {
     era = target_era,
     pop_era = pop_era,
     mean_ref_ratio = mean_ref_ratio,
+    n_sb_testable = nrow(dt_sb),
     pct_strand_bias = pct_sb_significant
   )
   
@@ -162,6 +224,7 @@ p_ref <- ggplot(all_sites_dt, aes(x = ref_ratio, fill = era)) +
   facet_wrap(~pop) +
   labs(title = "Reference Bias (Allele Balance)", x = "Ref / (Ref + Alt) Ratio", y = "Density", fill = "Era")
 
+# Bar plot of % significant strand-bias loci among Tarone-testable SNPs (p_min < 0.05)
 p_sb <- ggplot(summary_dt, aes(x = pop, y = pct_strand_bias, fill = era)) +
   geom_bar(stat = "identity", position = "dodge") +
   geom_text(
@@ -172,7 +235,13 @@ p_sb <- ggplot(summary_dt, aes(x = pop, y = pct_strand_bias, fill = era)) +
   ) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.15)), limits = c(0, NA)) +
   theme_minimal() +
-  labs(title = "Strand Bias (% Loci p < 0.05)", x = "Region/Population", y = "% Significant Loci", fill = "Era")
+  labs(
+    title = "Strand Bias (% Testable Loci with Fisher's Exact p < 0.05)",
+    subtitle = "Denominator restricted to Tarone-testable SNPs (p_min < 0.05; excludes monomorphic/low-power sites)",
+    x = "Region/Population",
+    y = "% Significant Testable Loci",
+    fill = "Era"
+  )
 
 png(alist$out_png, width = 10, height = 8, units = "in", res = 300, type = "cairo")
 grid.newpage()
