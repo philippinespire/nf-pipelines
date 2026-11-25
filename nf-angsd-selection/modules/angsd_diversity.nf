@@ -25,6 +25,7 @@ process ANGSD_DIVERSITY {
     """
 }
 
+// Plots pi and Watterson's theta for historic and modern populations, and outputs a summary table of the results
 process PLOT_PI_DIVERSITY {
     tag "Plot pi: ${region}"
     publishDir "${params.outdir}/diversity", mode: 'copy'
@@ -34,8 +35,10 @@ process PLOT_PI_DIVERSITY {
     path script
 
     output:
-    path "pi_historic_vs_modern_${region}_${label}.png" , emit: plot
-    path "pi_summary_${region}_${label}.tsv"            , emit: summary
+    path "pi_historic_vs_modern_${region}_${label}.png" , emit: pi_plot
+    path "pi_summary_${region}_${label}.tsv"            , emit: pi_summary
+    path "tW_historic_vs_modern_${region}_${label}.png" , emit: theta_plot
+    path "tW_summary_${region}_${label}.tsv"            , emit: theta_summary
 
     script:
     """
@@ -43,8 +46,10 @@ process PLOT_PI_DIVERSITY {
         --historic_file="${hist_pestPG}" \
         --modern_file="${mod_pestPG}" \
         --region="${region}" \
-        --out_png="pi_historic_vs_modern_${region}_${label}.png" \
-        --out_tsv="pi_summary_${region}_${label}.tsv" \
+        --out_pi_png="pi_historic_vs_modern_${region}_${label}.png" \
+        --out_pi_tsv="pi_summary_${region}_${label}.tsv" \
+        --out_theta_png="tW_historic_vs_modern_${region}_${label}.png" \
+        --out_theta_tsv="tW_summary_${region}_${label}.tsv" \
         --n_boot=10000
     """
 }
