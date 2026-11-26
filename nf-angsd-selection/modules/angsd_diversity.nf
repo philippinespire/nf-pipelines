@@ -39,6 +39,8 @@ process PLOT_PI_DIVERSITY {
     path "pi_summary_${region}_${label}.tsv"            , emit: pi_summary
     path "tW_historic_vs_modern_${region}_${label}.png" , emit: theta_plot
     path "tW_summary_${region}_${label}.tsv"            , emit: theta_summary
+    path "tajima_historic_vs_modern_${region}_${label}.png" , emit: tajima_plot
+    path "tajima_summary_${region}_${label}.tsv"            , emit: tajima_summary
 
     script:
     """
@@ -50,6 +52,8 @@ process PLOT_PI_DIVERSITY {
         --out_pi_tsv="pi_summary_${region}_${label}.tsv" \
         --out_theta_png="tW_historic_vs_modern_${region}_${label}.png" \
         --out_theta_tsv="tW_summary_${region}_${label}.tsv" \
+        --out_tajima_png="tajima_historic_vs_modern_${region}_${label}.png" \
+        --out_tajima_tsv="tajima_summary_${region}_${label}.tsv" \
         --n_boot=10000
     """
 }
