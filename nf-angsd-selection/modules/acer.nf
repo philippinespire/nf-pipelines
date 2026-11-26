@@ -1,6 +1,7 @@
 process RUN_ACER {
     tag "ACER Selection Scan"
-    publishDir "${params.outdir}/selection", mode: 'copy'
+    publishDir "${params.outdir}/selection", mode: 'copy', pattern: "!final_test_results.tsv"
+    publishDir "${params.outdir}/large_data/selection",    mode: 'copy', pattern: "final_test_results.tsv"
 
     input:
     path mafs           // All ${region}_${era}.mafs.gz files from ANGSD_GL_POP
